@@ -210,3 +210,26 @@ code.inline { background: #eef1f6; padding: 1px 6px; border-radius: 5px; font-si
 .hint { background: #f8fafc; border: 1px dashed var(--line); border-radius: 9px; padding: 10px 12px; color: var(--muted); font-size: 12.5px; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+/* ---------- 年度统计矩阵 */
+table.tbl.matrix { border-collapse: separate; border-spacing: 0; }
+table.tbl.matrix th, table.tbl.matrix td { white-space: nowrap; }
+table.tbl.matrix th.sticky, table.tbl.matrix td.sticky {
+  position: sticky; left: 0; z-index: 2; background: #fff;
+  box-shadow: 1px 0 0 var(--line);
+}
+table.tbl.matrix thead th.sticky { background: #fafbfc; z-index: 3; }
+table.tbl.matrix tfoot td { border-top: 2px solid var(--line); background: #fafbfc; }
+table.tbl.matrix td.zero { color: #c7ccd6; }
+button.linkbtn { border: 0; background: none; padding: 0; color: var(--brand); font: inherit; cursor: pointer; }
+button.linkbtn:hover { text-decoration: underline; }
+
+/* ---------- 活动照片网格 */
+.thumbs.grid-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.thumb.big { width: 100%; height: 150px; }
+.thumb-del {
+  position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+  border-radius: 50%; border: 0; background: rgba(0, 0, 0, .55); color: #fff;
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 0;
+}
+.thumb-del:hover { background: var(--bad); }

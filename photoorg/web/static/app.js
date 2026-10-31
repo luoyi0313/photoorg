@@ -3,7 +3,7 @@
   const $ = (s, e=document) => e.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const q = new URLSearchParams(location.search);
-  const S = { cls: q.get('class') || '', batch: q.get('batch') || '', page: 'overview', boot: null, data: null, review: null };
+  const S = { cls: q.get('class') || '', batch: q.get('batch') || '', page: 'overview', boot: null, data: null, review: null, range: { from: '', to: '' }, matrix: null, personId: null, personData: null, gallery: null, batchPhotos: null };
   const api = async (url, opt={}) => {
     // API 永远取最新数据库状态，不能让浏览器缓存旧的 batch / publish 响应。
     const isGet = !opt.method || opt.method === 'GET';
@@ -23,7 +23,9 @@
   const operator = () => localStorage.getItem('photoorg.operator') || '本机用户';
   async function refresh(keepPage=true) {
     S.boot = await api('/api/bootstrap?'+clsQ());
-    if (!S.cls) S.cls=S.boot.class;
+    const classNames=(S.boot.classes||[]).map(x=>x.name);
+    // 班级被删掉后不能继续拿旧名字去请求，否则会指向一个不存在的班级
+    if(!S.cls || (classNames.length && !classNames.includes(S.cls))) S.cls=classNames[0]||'';
     const batches=S.boot.batches||[];
     // 当前批次不存在（例如切换班级、刚创建活动）时，自动选择最新批次。
     if (!S.batch || !batches.some(x=>x.batch===S.batch)) S.batch=batches.length ? batches[batches.length-1].batch : '';
@@ -41,28 +43,33 @@
     const n=S.data?.review_count||0, badge=$('#reviewBadge');
     if(badge) { badge.textContent=n; badge.className='badge '+(n?'':'zero'); }
     const report=$('#outReport');
-    if(report) report.href=S.batch?`/api/export/report.md?${batchQ()}&_ts=${Date.now()}`:'#';
+    // 「下载报告」= 全班「活动×人员」出勤表（CSV，Excel 可直接打开）
+    if(report) { report.href=S.cls?`/api/export/matrix.csv?${clsQ()}&_ts=${Date.now()}`:'#'; report.title='下载全班出勤统计表（活动×人员，CSV）'; }
   }
   // Tab 由下方 #tabs 的稳定事件监听器处理；渲染时只替换按钮内容，不依赖行内 onclick。
-  function tab(name) { return `<button type="button" data-page="${name}" class="${S.page===name?'on':''}">${({overview:'总览',review:'灰区复核',inspect:'结果审查',gallery:'底库管理',clusters:'冷启动聚类',settings:'设置与审计'})[name]}</button>`; }
+  function tab(name) { return `<button type="button" data-page="${name}" class="${S.page===name?'on':''}">${({overview:'总览',review:'灰区复核',inspect:'结果审查',gallery:'底库管理',stats:'年度统计',photos:'活动照片',clusters:'冷启动聚类',settings:'设置与审计'})[name]}</button>`; }
   function empty(icon,title,detail='') { return `<div class="empty"><div class="big">${icon}</div><h2>${esc(title)}</h2><div>${detail}</div></div>`; }
   function noBatchPage(page) {
     const help={
       review:{icon:'🤔',title:'灰区复核：处理“系统拿不准”的脸',body:'活动照片识别后，只有相似度不够确定的人脸才会出现在这里。你将看到人脸截图和候选姓名，可确认是谁、标为不认识，或新建人员。',after:'上传活动照片后：这里会显示“第 1 / N 条待确认”，逐张处理即可。'},
       inspect:{icon:'🔍',title:'结果审查：检查“系统已经识别”的结果',body:'活动照片识别后，这里会按人员展示已经归档的照片。你可以打开原图查看脸框，发现识别错了就改判、标为不认识，或把照片移出该人员。',after:'上传活动照片后：这里会显示每个已出现人员及其归档照片。'},
       clusters:{icon:'🧩',title:'冷启动聚类：给重复出现的陌生人命名',body:'活动照片中有同一个“未知人员”重复出现时，这里会把这些脸组成一组。确认是同一人后输入姓名，就能建立该人的底库。',after:'上传活动照片后：点击“扫描并开始聚类”即可查找重复出现的未知脸。'},
+      photos:{icon:'🖼',title:'活动照片：看这一批的全部照片',body:'这里列出当前活动里的每一张照片。你可以追加照片、删除单张照片，或者把整个活动删掉后重传。',after:'上传活动照片后：这里会显示该活动的全部照片，点击可看大图与人脸。'},
       settings:{icon:'⚙️',title:'设置与审计：追溯与高级维护',body:'这里用于查看人工改判记录、恢复归档、导出修正记录和校准识别阈值。正常的上传、识别、复核和发布流程不需要在这里操作。',after:'上传活动照片后：这里会显示当前活动的审计日志和归档维护操作。'},
     };
     const h=help[page]||help.review;
     $('#main').innerHTML=`<section class="card"><div class="empty"><div class="big">${h.icon}</div><h2>${esc(h.title)}</h2><p class="muted">${esc(h.body)}</p><div class="hint">${esc(h.after)}</div><div class="row" style="justify-content:center;margin-top:18px"><button class="btn primary" onclick="window.PO.openActivityUpload()">新建活动并上传照片</button><button class="btn" onclick="window.PO.go('gallery')">先去管理底库</button></div></div></section>`;
   }
   function render() {
-    $('#tabs').innerHTML=['overview','review','inspect','gallery','clusters','settings'].map(tab).join('');
+    $('#tabs').innerHTML=['overview','review','inspect','gallery','stats','photos','clusters','settings'].map(tab).join('');
+    // 年度统计与人员明细只看数据库，不依赖当前批次。
+    if (S.page==='stats') { stats(); return; }
+    if (S.page==='person') { personPage(); return; }
     // 底库管理是独立功能：即使还没有任何活动批次也必须可用。
     if (!S.data && S.page==='gallery') { gallery(); return; }
     if (!S.data && S.page!=='overview') { noBatchPage(S.page); return; }
     if (!S.data) { $('#main').innerHTML=`<section class="card"><h2>从这里开始</h2><p class="muted">这个班还没有处理过活动照片。先上传底库参考照片，再创建活动并上传整个活动照片文件夹；不需要打开终端。</p><div class="row"><button class="btn primary" onclick="window.PO.openGalleryUpload()">1 · 上传底库参考照片</button><button class="btn" onclick="window.PO.openActivityUpload()">2 · 新建活动并上传照片</button></div><div class="hint" style="margin-top:14px">推荐顺序：先为每位人员上传 3～10 张清晰参考照；然后上传活动照片文件夹。即使暂时没有底库，你也可以先上传活动图片，后续使用“冷启动聚类”给人物命名。</div></section>`; return; }
-    ({overview,review,inspect,gallery,clusters,settings}[S.page]||overview)();
+    ({overview,review,inspect,gallery,stats,photos:activityPhotos,person:personPage,clusters,settings}[S.page]||overview)();
   }
   function overview() {
     const d=S.data, st=d.stats, persons=d.persons;
@@ -117,7 +124,7 @@
   async function clusters(threshold=0.55,minSize=2) { $('#main').innerHTML='<div class="empty"><div class="big">🧩</div>正在扫描本活动中的未知人脸…</div>'; try { const r=await api('/api/clusters?'+batchQ()+`&only_unknown=true&threshold=${threshold}&min_size=${minSize}`); $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>冷启动聚类：给“陌生人”建底库</h2><p class="muted">适合第一次使用、还没有完整底库时：系统把本活动中反复出现但还不认识的脸放在一起。确认它们是同一个人后，给这一组输入姓名，系统就会创建人员并把这些脸加入底库。</p></div></div><div class="hint"><b>什么时候用？</b>活动照片里有人被标成“名单外 / 不认识”，但你希望下次能自动识别时使用。<br><b>什么时候不用？</b>如果已经有完整底库、也没有未知人脸，可以忽略此页。</div><div class="row" style="margin-top:12px"><label class="small">相似度要求<br><input id="clusterThreshold" type="number" min="0.30" max="0.95" step="0.05" value="${threshold}" style="width:100px"></label><label class="small">最少出现次数<br><input id="clusterMinSize" type="number" min="2" max="20" step="1" value="${minSize}" style="width:80px"></label><button class="btn primary" onclick="window.PO.runClusters()">扫描并开始聚类</button></div><p class="muted small">相似度越高，分组越严格；通常保持默认值即可。只扫描当前活动中尚未认识的人脸，不会改变已有识别结果。</p></div><div class="card" style="margin-top:14px"><div class="row"><h2>扫描结果</h2><span class="muted small">${r.clusters.length?'找到 '+r.clusters.length+' 组可命名人脸':'没有找到重复出现的未知人脸'}</span></div>${r.clusters.length?r.clusters.map(c=>`<div class="person"><div class="who"><div class="nm">同一人候选组 #${c.cid}</div><div class="muted small">在 ${c.size} 张脸中重复出现</div><button class="btn sm primary" onclick="window.PO.acceptCluster(${c.cid})">确认同一人并命名</button></div><div class="thumbs">${c.members.map(m=>`<div class="thumb"><img src="${m.crop}"><span class="tag">${esc(m.photo_name)}</span></div>`).join('')}</div></div>`).join(''):empty('🧩','当前没有可聚类的人脸','这通常表示：所有人已经识别完成，或未知人脸只各出现一次。你可以上传更多活动照片后再点“扫描并开始聚类”。')}</div>`; S.clusters=r.clusters; } catch(e) { $('#main').innerHTML=empty('🧩','暂时不能聚类',e.message); } }
   function runClusters(){const t=Number($('#clusterThreshold')?.value)||0.55, n=Number($('#clusterMinSize')?.value)||2;clusters(t,n);}
 
-  async function settings() { $('#main').innerHTML=`<section class="card"><h2>设置与审计：日常通常不需要操作</h2><p class="muted">这里放的是“纠错、追溯和重建”工具。正常流程只需上传底库、上传活动照片、复核后发布；只有出现下面的特殊情况时才需要来这里。</p><div class="grid c3"><div class="hint"><b>① 我手动改了归档文件夹</b><br>例如在资源管理器里把一张照片拖给了另一个人：点“吸收手动拖动”，把变化写回系统，避免下次重建丢失。</div><div class="hint"><b>② 想恢复整理后的归档</b><br>如果 out/ 文件夹被误删或混乱，点顶部“重建归档”。原始活动照片和识别结论不会丢。</div><div class="hint"><b>③ 想追查谁改过结果</b><br>在下面的审计日志查看人工确认、改判、移出和发布等操作；也可导出 CSV 留档。</div></div></section><div class="split" style="margin-top:14px"><section class="card"><h2>识别阈值校准（高级）</h2><p class="muted">当你已经人工复核过许多灰区，才建议生成阈值建议。它不会自动改动；采纳后会影响历史批次重新匹配的判断。</p><button class="btn" onclick="window.PO.calibrate()">生成校准建议</button><div id="calResult" style="margin-top:12px"></div></section><section class="card"><h2>手动文件调整</h2><p class="muted">通常直接在网页“结果审查”里改判更安全。只有你确实在 Finder / 资源管理器中手动移动 out/ 下的归档照片时，才使用此功能。</p><button class="btn" onclick="window.PO.adopt()">吸收手动拖动</button> <a class="btn" href="/api/export/overrides.csv?${batchQ()}">导出人工修正 CSV</a><p class="muted small">人工修正会保留完整时间和原因记录，方便撤销和追溯。</p></section></div><section class="card" style="margin-top:14px"><div class="row"><div><h2>最近审计日志</h2><span class="muted small">记录所有人工确认、改判、移出、吸收和发布操作。</span></div><button class="btn sm right" onclick="window.PO.showAudit()">刷新日志</button></div><div id="auditLog" class="muted">正在读取…</div></section>`; showAudit(); }
+  async function settings() { $('#main').innerHTML=`<section class="card"><h2>设置与审计：日常通常不需要操作</h2><p class="muted">这里放的是“纠错、追溯和重建”工具。正常流程只需上传底库、上传活动照片、复核后发布；只有出现下面的特殊情况时才需要来这里。</p><div class="grid c3"><div class="hint"><b>① 我手动改了归档文件夹</b><br>例如在资源管理器里把一张照片拖给了另一个人：点“吸收手动拖动”，把变化写回系统，避免下次重建丢失。</div><div class="hint"><b>② 想恢复整理后的归档</b><br>如果 out/ 文件夹被误删或混乱，点顶部“重建归档”。原始活动照片和识别结论不会丢。</div><div class="hint"><b>③ 想追查谁改过结果</b><br>在下面的审计日志查看人工确认、改判、移出和发布等操作；也可导出 CSV 留档。</div></div></section><div class="split" style="margin-top:14px"><section class="card"><h2>识别阈值校准（高级）</h2><p class="muted">当你已经人工复核过许多灰区，才建议生成阈值建议。它不会自动改动；采纳后会影响历史批次重新匹配的判断。</p><button class="btn" onclick="window.PO.calibrate()">生成校准建议</button><div id="calResult" style="margin-top:12px"></div></section><section class="card"><h2>手动文件调整</h2><p class="muted">通常直接在网页“结果审查”里改判更安全。只有你确实在 Finder / 资源管理器中手动移动 out/ 下的归档照片时，才使用此功能。</p><button class="btn" onclick="window.PO.adopt()">吸收手动拖动</button> <a class="btn" href="/api/export/overrides.csv?${batchQ()}">导出人工修正 CSV</a><p class="muted small">人工修正会保留完整时间和原因记录，方便撤销和追溯。</p></section></div><section class="card" style="margin-top:14px"><div class="row"><div><h2>最近审计日志</h2><span class="muted small">记录所有人工确认、改判、移出、吸收和发布操作。</span></div><button class="btn sm right" onclick="window.PO.showAudit()">刷新日志</button></div><div id="auditLog" class="muted">正在读取…</div></section><section class="card" style="margin-top:14px"><div class="row"><div><h2>删除班级（危险）</h2><span class="muted small">会删除「${esc(S.cls||'—')}」的名单关系、底库模板、识别数据与 out/ 归档。</span></div><button class="btn danger right" onclick="window.PO.confirmDeleteClass()">删除班级</button></div><p class="muted small" style="margin-top:8px">提示：删除活动请到「活动照片」页，那里有「删除本活动」；只想删掉某张照片也在那一页。</p></section>`; showAudit(); }
 
   async function openPhoto(hash) { try { const d=await api('/api/photo/'+hash+'?'+clsQ()); S.photoFaces=S.photoFaces||{}; S.photoFaces[hash]=d; const faces=d.faces; const labels=faces.map(f=>`<div class="facechip"><img src="/api/crop/${hash}/${f.face_idx}?size=100"><span><b>${esc(f.person_name||'未知')}</b><br><small>${esc(f.status)} · ${f.score.toFixed(2)} ${f.manual?'· 人工':''}</small></span><button class="btn sm" onclick="window.PO.openFaceDecision('${hash}',${f.face_idx})">改判</button></div>`).join(''); modal(`<div class="head"><h2>${esc(d.name||hash.slice(0,8))}</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="photo-stage"><img id="photoStageImg" src="/api/image/${hash}?max=1500" onload="window.PO.drawFaces(this,'${hash}')"><div id="faceBoxes"></div></div><h3 style="margin-top:12px">照片内人脸</h3><div>${labels||'未检出脸'}</div><div class="hint">“移出此人”要在对应人员缩略图中操作；“改判”会同时更新脸层和照片×人层结论。</div>`); } catch(e){toast(e.message,'bad');} }
   async function openFaceDecision(hash,idx) { const d=S.photoFaces?.[hash] || await api('/api/photo/'+hash+'?'+clsQ()); const f=d.faces.find(x=>x.face_idx===idx); const roster=S.data.persons.map(p=>`<option value="${p.person_id}" ${p.person_id===f.person_id?'selected':''}>${esc(p.name)}</option>`).join(''); modal(`<div class="head"><h2>改判这张脸</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="row"><img style="width:160px;height:160px;object-fit:cover;border-radius:10px" src="/api/crop/${hash}/${idx}?size=300"><div><p>自动候选：<b>${esc(f.person_name||'未知')}</b> · ${f.score.toFixed(2)}</p><select id="facePerson">${roster}</select><div class="row" style="margin-top:12px"><button class="btn primary" onclick="window.PO.setFace('${hash}',${idx})">确认/改判</button><button class="btn" onclick="window.PO.setFaceUnknown('${hash}',${idx})">不认识</button>${f.person_id?`<button class="btn danger" onclick="window.PO.setPair('${hash}',${f.person_id},'absent')">移出 ${esc(f.person_name)}</button>`:''}</div></div></div>`); }
@@ -217,6 +224,99 @@
   $('#batchSelect').addEventListener('change',async e=>{S.batch=e.target.value;await refresh();});
   $('#rebuildBtn').onclick=rebuild;
   document.addEventListener('keydown',e=>{if(S.page!=='review'||!S.review?.items?.length||$('#modalRoot').innerHTML)return;const x=S.review.items[S.review.idx];if(e.key>='1'&&e.key<='3'){const c=x.candidates[Number(e.key)-1];if(c){e.preventDefault();decide('present',c.person_id);}}else if(e.key.toLowerCase()==='x'){e.preventDefault();decide('unknown');}else if(e.key==='+'){e.preventDefault();newPerson();}else if(e.key==='Enter'){e.preventDefault();nextReview();}else if(e.key.toLowerCase()==='z'){post('/api/undo',{batch:S.batch}).then(()=>refresh().then(review));}});
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,confirmAbsent,enrollAbsent,submitAbsent,renamePerson,unpublish,publish,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+
+  // ---------------- 年度统计：活动 × 人员
+  const rangeQS = () => `from=${encodeURIComponent((S.range&&S.range.from)||'')}&to=${encodeURIComponent((S.range&&S.range.to)||'')}`;
+  function rangeInputs() {
+    const f=(S.range&&S.range.from)||'', t=(S.range&&S.range.to)||'';
+    return `<div class="row" style="margin-top:10px;align-items:flex-end"><label class="small">开始日期<br><input id="rangeFrom" type="date" value="${f}"></label><label class="small">结束日期<br><input id="rangeTo" type="date" value="${t}"></label><button class="btn" onclick="window.PO.applyRange()">筛选</button><button class="btn ghost" onclick="window.PO.clearRange()">全部时间</button><span class="muted small">${f||t?`当前范围：${f||'最早'} ～ ${t||'最新'}`:'当前范围：全部活动'}</span></div>`;
+  }
+  async function stats() {
+    $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>年度统计：活动 × 人员</h2><div class="muted small">每一格 = 这个人在该活动里出现的照片张数；点人名可以看他的全部照片。</div></div><span class="right"><a class="btn primary" download href="/api/export/matrix.csv?${clsQ()}&${rangeQS()}">下载 CSV（Excel）</a></span></div>${rangeInputs()}<div id="matrixWrap" style="overflow:auto;margin-top:12px"><span class="muted">正在统计…</span></div></section>`;
+    try {
+      const r = await api('/api/matrix?'+clsQ()+'&'+rangeQS());
+      S.matrix = r;
+      const head=`<tr><th class="sticky">活动</th><th>日期</th>${r.persons.map(p=>`<th class="num"><button class="linkbtn" onclick="window.PO.openPerson(${p.person_id})">${esc(p.name)}</button></th>`).join('')}<th class="num">照片数</th></tr>`;
+      const body=r.batches.map(b=>`<tr><td class="sticky"><b>${esc(b.activity||b.batch)}</b></td><td class="muted">${esc(b.date||'—')}</td>${r.persons.map(p=>{const n=p.counts[b.batch]||0;return `<td class="num${n?'':' zero'}">${n||''}</td>`;}).join('')}<td class="num">${b.n_photos}</td></tr>`).join('');
+      const foot=`<tr><td class="sticky"><b>合计</b></td><td></td>${r.persons.map(p=>`<td class="num"><b>${p.total}</b></td>`).join('')}<td class="num"><b>${r.n_photos_total}</b></td></tr>`;
+      $('#matrixWrap').innerHTML = r.batches.length
+        ? `<table class="tbl matrix"><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`
+        : `<p class="muted">这个时间范围内还没有活动。</p>`;
+    } catch(e) { $('#matrixWrap').innerHTML=`<p class="muted">${esc(e.message)}</p>`; }
+  }
+  function applyRange(){ S.range={from:$('#rangeFrom')?.value||'', to:$('#rangeTo')?.value||''}; if(S.page==='person') personPage(); else stats(); }
+  function clearRange(){ S.range={from:'',to:''}; if(S.page==='person') personPage(); else stats(); }
+
+  // ---------------- 人员明细：这个人在所有活动里的照片
+  function openPerson(pid){ S.personId=pid; S.page='person'; render(); }
+  async function personPage() {
+    const pid=S.personId;
+    $('#main').innerHTML='<div class="empty"><div class="big">⏳</div>正在汇总这个人的照片…</div>';
+    try {
+      const r = await api(`/api/person/photos?person_id=${pid}&${clsQ()}&${rangeQS()}`);
+      S.personData=r;
+      const groups=r.groups.map(g=>`<section class="card" style="margin:10px 0"><div class="row"><div><b>${esc(g.activity||g.batch)}</b><span class="muted small"> · ${esc(g.date||'无日期')} · ${g.count} 张</span></div></div><div class="thumbs" style="margin-top:10px">${g.photos.map(x=>`<div class="thumb" title="${esc(x.name)}" onclick="window.PO.openPhoto('${x.photo_hash}')"><img loading="lazy" src="${x.face_idx>=0?`/api/crop/${x.photo_hash}/${x.face_idx}?size=180`:`/api/image/${x.photo_hash}?max=300`}"><span class="tag">${esc(x.name)}</span></div>`).join('')}</div></section>`).join('');
+      $('#main').innerHTML=`<section class="card"><div class="row"><button class="btn sm" onclick="window.PO.go('stats')">← 返回年度统计</button><span class="right muted small">点照片看大图</span></div><h2 style="margin-top:10px">${esc(r.name)} · 共 ${r.total} 张</h2>${rangeInputs()}</section>${groups||'<div class="card"><p class="muted">这个时间范围内没有他/她的照片。</p></div>'}`;
+    } catch(e) {
+      $('#main').innerHTML=`<section class="card"><button class="btn sm" onclick="window.PO.go('stats')">← 返回年度统计</button><p class="muted" style="margin-top:10px">${esc(e.message)}</p></section>`;
+    }
+  }
+
+  // ---------------- 活动照片：查看 / 追加 / 删除
+  async function activityPhotos() {
+    const r = await api('/api/batch/photos?'+batchQ());
+    S.batchPhotos=r;
+    const photos=r.photos.map(x=>`<div class="thumb big"><img loading="lazy" src="/api/image/${x.photo_hash}?max=400" onclick="window.PO.openPhoto('${x.photo_hash}')"><span class="tag">${x.n_faces} 张脸</span><button class="thumb-del" title="从本活动删除这张照片" onclick="event.stopPropagation();window.PO.deletePhoto('${x.photo_hash}')">✕</button></div>`).join('');
+    $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>活动照片 · ${esc(S.batch)}</h2><div class="muted small">共 ${r.count} 张。删除单张会删掉它的识别结果并重建归档。</div></div><span class="right"><button class="btn" onclick="window.PO.openBatchAdd()">+ 添加照片</button><button class="btn danger" onclick="window.PO.confirmDeleteBatch()">删除本活动</button></span></div><div class="row" style="margin-top:10px"><a class="btn sm" href="/api/export/report.md?${batchQ()}">下载本活动报告 (md)</a><a class="btn sm" href="/api/export/report.csv?${batchQ()}">下载明细 (csv)</a></div><div class="thumbs grid-photos">${photos||'<span class="muted">这个活动没有照片。</span>'}</div></section>`;
+  }
+  function openBatchAdd() {
+    modal(`<div class="head"><h2>往「${esc(S.batch)}」添加照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><p class="muted">选择要追加进这个活动的照片（可多选）。添加后会重新识别整个活动并更新报告。</p><input id="batchAddFiles" type="file" accept="image/*,.heic" multiple><div id="batchAddInfo" class="hint" style="margin-top:10px">尚未选择照片。</div><div class="row" style="margin-top:14px"><button class="btn primary" id="batchAddSubmit" onclick="window.PO.submitBatchAdd()">上传并重新识别</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
+    const f=$('#batchAddFiles'); if(f) f.onchange=()=>setText('#batchAddInfo', f.files.length?`已选择 ${f.files.length} 张。`:'尚未选择照片。');
+  }
+  async function submitBatchAdd() {
+    const f=$('#batchAddFiles'); if(!f?.files?.length){toast('请先选择照片','bad');return;}
+    const form=new FormData(); form.append('class_name',S.cls); form.append('batch',S.batch);
+    for(const file of f.files) form.append('files',file,file.name);
+    const btn=$('#batchAddSubmit'); if(btn){btn.disabled=true;btn.textContent='正在识别…';}
+    try {
+      const res=await fetch('/api/batch/photos',{method:'POST',body:form});
+      const d=await res.json();
+      if(!res.ok) throw new Error(d.detail||'上传失败');
+      closeModal(); toast(`已添加 ${d.saved} 张，本活动现有 ${d.run.n_new} 张新增 / ${d.run.n_skipped} 张复用`,'ok');
+      await refresh(); activityPhotos();
+    } catch(e){ toast(e.message,'bad'); if(btn){btn.disabled=false;btn.textContent='上传并重新识别';} }
+  }
+  async function deletePhoto(hash) {
+    if(!confirm('从本活动删除这张照片？原文件、识别结果和归档会一起删掉，不可撤销。')) return;
+    try { await post('/api/photo/delete',{batch:S.batch,photo_hash:hash}); toast('照片已删除','ok'); await refresh(); activityPhotos(); }
+    catch(e){ toast(e.message,'bad'); }
+  }
+  function confirmDeleteBatch() {
+    modal(`<div class="head"><h2>删除活动「${esc(S.batch)}」</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><p>会删除这个活动的识别结果、人工复核记录、状态和 out/ 归档，不可撤销。</p><label class="row" style="gap:8px;justify-content:flex-start"><input id="delBatchPhotos" type="checkbox" checked> 同时删除 photos/${esc(S.batch)}/ 下的原始照片文件</label><div class="hint" style="margin-top:10px">不勾选则只删数据库记录与归档，原始照片文件保留在磁盘上。</div><div class="row" style="margin-top:14px"><button class="btn danger" onclick="window.PO.doDeleteBatch()">确认删除</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
+  }
+  async function doDeleteBatch() {
+    const del=!!$('#delBatchPhotos')?.checked;
+    try {
+      const r=await post('/api/batch/delete',{batch:S.batch,delete_photos:del});
+      closeModal(); toast(`已删除活动「${r.batch}」，${r.deleted_photos} 张照片记录`,'ok');
+      S.batch=''; await refresh(); go('overview');
+    } catch(e){ toast(e.message,'bad'); }
+  }
+
+  // ---------------- 删除班级
+  function confirmDeleteClass() {
+    const cls=S.cls; if(!cls){ toast('还没有班级','bad'); return; }
+    modal(`<div class="head"><h2>删除班级「${esc(cls)}」</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><p>会删除这个班的：名单关系、底库模板、全部活动的识别数据与 out/ 归档。此操作不可撤销。</p><label class="row" style="gap:8px;justify-content:flex-start"><input id="delClassPhotos" type="checkbox"> 同时删除该班 photos/ 下的原始照片文件（更危险）</label><div class="row" style="margin-top:14px"><button class="btn danger" onclick="window.PO.doDeleteClass()">确认删除</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
+  }
+  async function doDeleteClass() {
+    const del=!!$('#delClassPhotos')?.checked;
+    try {
+      const r=await post('/api/class/delete',{class_name:S.cls,delete_photos:del});
+      closeModal(); toast(`已删除班级「${r.deleted}」`,'ok');
+      S.cls=''; S.batch=''; S.page='overview'; await refresh(); render();
+    } catch(e){ toast(e.message,'bad'); }
+  }
+
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,confirmAbsent,enrollAbsent,submitAbsent,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();

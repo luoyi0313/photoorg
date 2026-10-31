@@ -122,6 +122,13 @@ class StateStore:
                 rec["state"] = AUTO_DONE
         return self._mutate(batch, fn)
 
+    def remove(self, batch: str) -> None:
+        """批次被删除时，连它的状态记录一起清掉。"""
+        data = self._all()
+        if batch in data:
+            data.pop(batch, None)
+            self._save(data)
+
     def confirmations(self, batch: str) -> set[int]:
         st = self.get(batch)
         return {int(k) for k in (st.get("confirmations") or {}).keys()}

@@ -218,6 +218,21 @@ class PersonStore:
             con.execute("DELETE FROM templates WHERE person_id=?", (person_id,))
 
     # -- classes
+    def delete_class(self, name: str) -> int | None:
+        """删掉班级及其成员/模板关系，返回 class_id（不存在则 None）。
+
+        全局 persons 不删：同一个人可能在别的班里，且历史统计仍需要人名。
+        """
+        with self.conn() as con:
+            row = con.execute("SELECT id FROM classes WHERE name=?", (name.strip(),)).fetchone()
+            if not row:
+                return None
+            cid = int(row["id"])
+            con.execute("DELETE FROM templates WHERE class_id=?", (cid,))
+            con.execute("DELETE FROM members WHERE class_id=?", (cid,))
+            con.execute("DELETE FROM classes WHERE id=?", (cid,))
+            return cid
+
     def upsert_class(self, name: str, note: str = "") -> int:
         name = name.strip()
         if not name:
@@ -556,6 +571,28 @@ class ClassDB:
             args.append(person_id)
         with self.conn() as con:
             return _rows(con.execute(q, args))
+
+    # -- 删除（照片 / 批次）
+    def delete_photo(self, hash: str) -> None:
+        """删掉一张照片及其人脸、决策、照片×人结论。"""
+        with self.conn() as con:
+            con.execute("DELETE FROM faces WHERE photo_hash=?", (hash,))
+            con.execute("DELETE FROM decisions WHERE photo_hash=?", (hash,))
+            con.execute("DELETE FROM pairs WHERE photo_hash=?", (hash,))
+            con.execute("DELETE FROM photos WHERE hash=?", (hash,))
+
+    def delete_batch(self, batch: str) -> int:
+        """删掉一个批次的全部推理产物，返回删除的照片数。"""
+        with self.conn() as con:
+            hashes = [r["hash"] for r in con.execute("SELECT hash FROM photos WHERE batch=?", (batch,))]
+            if not hashes:
+                return 0
+            marks = ",".join("?" * len(hashes))
+            con.execute(f"DELETE FROM faces WHERE photo_hash IN ({marks})", hashes)
+            con.execute(f"DELETE FROM decisions WHERE photo_hash IN ({marks})", hashes)
+            con.execute(f"DELETE FROM pairs WHERE photo_hash IN ({marks})", hashes)
+            con.execute(f"DELETE FROM photos WHERE hash IN ({marks})", hashes)
+            return len(hashes)
 
 
 # ---------------------------------------------------------------- overrides

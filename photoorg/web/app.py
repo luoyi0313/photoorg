@@ -13,6 +13,7 @@ import os
 import shutil
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -42,6 +43,7 @@ from ..pipeline import UserError, batch_meta, load_settings, rematch, resolve_ba
 from ..report import build_csv, build_markdown
 from ..results import compute_batch, photo_faces_detail
 from ..state import PUBLISHED, REVIEWED, RUNNING, StateStore
+from ..stats import class_matrix, matrix_csv, person_photos
 from ..templates import (
     add_template_from_face,
     delete_person_with_gallery,
@@ -131,6 +133,21 @@ class RenameReq(BaseModel):
     class_name: str = ""
 
 
+class PhotoDeleteReq(BaseModel):
+    batch: str
+    photo_hash: str
+
+
+class BatchDeleteReq(BaseModel):
+    batch: str
+    delete_photos: bool = False
+
+
+class ClassDeleteReq(BaseModel):
+    class_name: str
+    delete_photos: bool = False
+
+
 # --------------------------------------------------------------- app
 
 
@@ -197,6 +214,30 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             if ph and Path(ph["abs"]).exists():
                 return Path(ph["abs"])
         raise HTTPException(404, "照片文件不在了")
+
+    def _attachment(filename: str) -> dict:
+        """HTTP 头只能 latin-1：中文文件名必须走 RFC 5987 的 filename*，
+        否则 Starlette 编码响应头时直接 500（「下载报告」之前就栽在这里）。"""
+        stem, dot, ext = filename.rpartition(".") if "." in filename else (filename, "", "")
+        ascii_stem = "".join(ch for ch in stem if ord(ch) < 128).strip(" -_.") or "download"
+        ascii_name = f"{ascii_stem}.{ext}" if dot else ascii_stem
+        return {
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_name}"; '
+                f"filename*=UTF-8''{quote(filename)}"
+            )
+        }
+
+    def _unlink_photo(path: Path) -> None:
+        """只删 photos/ 目录里的文件；数据库里记的绝对路径可能是外部路径，不碰。"""
+        try:
+            Path(path).resolve().relative_to(app_paths.photos.resolve())
+        except ValueError:
+            return
+        try:
+            Path(path).unlink()
+        except (FileNotFoundError, IsADirectoryError):
+            pass
 
     def _activity_batch(activity: str, when: str | None) -> str:
         """构造唯一批次名：YYYYMMDD-活动。日期为空则使用本地当天。"""
@@ -274,6 +315,11 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
                 }
             )
         cur = _class(cls) if classes else (cls or "")
+        # 班级被删掉后，浏览器可能还带着旧班级名；回落到第一个存在的班级，
+        # 否则会在磁盘上重新创建出一个空班级库。
+        names = [x["name"] for x in classes]
+        if names and cur not in names:
+            cur = names[0]
         batches = []
         sstore = StateStore(app_paths.class_paths(cur).batch_state) if cur else None
         cdb = ClassDB(app_paths.class_paths(cur).faces_db) if cur else None
@@ -861,7 +907,7 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         b = _batch(c, batch)
         view = compute_batch(app_paths, c, b)
         return Response(build_markdown(view), media_type="text/markdown; charset=utf-8",
-                        headers={"Content-Disposition": f'attachment; filename="report-{b}.md"'})
+                        headers=_attachment(f"report-{b}.md"))
 
     @api.get("/api/export/report.csv")
     def export_csv(batch: str | None = None, cls: str | None = Query(None, alias="class")):
@@ -869,14 +915,177 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         b = _batch(c, batch)
         view = compute_batch(app_paths, c, b)
         return Response(build_csv(view), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f'attachment; filename="report-{b}.csv"'})
+                        headers=_attachment(f"report-{b}.csv"))
 
     @api.get("/api/export/overrides.csv")
     def export_overrides(batch: str | None = None, cls: str | None = Query(None, alias="class")):
         c = _class(cls)
         b = _batch(c, batch)
         return Response(export_overrides_csv(app_paths, c, b), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f'attachment; filename="overrides-{b}.csv"'})
+                        headers=_attachment(f"overrides-{b}.csv"))
+
+    # ---------------- 年度统计（活动 × 人员）
+    @api.get("/api/matrix")
+    def matrix(
+        cls: str | None = Query(None, alias="class"),
+        date_from: str = Query("", alias="from"),
+        date_to: str = Query("", alias="to"),
+    ):
+        c = _class(cls)
+        try:
+            return class_matrix(app_paths, c, date_from, date_to)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @api.get("/api/export/matrix.csv")
+    def export_matrix(
+        cls: str | None = Query(None, alias="class"),
+        date_from: str = Query("", alias="from"),
+        date_to: str = Query("", alias="to"),
+    ):
+        c = _class(cls)
+        try:
+            data = class_matrix(app_paths, c, date_from, date_to)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return Response(
+            matrix_csv(data),
+            media_type="text/csv; charset=utf-8",
+            headers=_attachment(f"出勤统计-{c}.csv"),
+        )
+
+    @api.get("/api/person/photos")
+    def person_photo_list(
+        person_id: int,
+        cls: str | None = Query(None, alias="class"),
+        date_from: str = Query("", alias="from"),
+        date_to: str = Query("", alias="to"),
+    ):
+        c = _class(cls)
+        try:
+            return person_photos(app_paths, c, person_id, date_from, date_to)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    # ---------------- 活动照片（查看 / 追加 / 删除）
+    @api.get("/api/batch/photos")
+    def batch_photo_list(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        cdb = ClassDB(app_paths.class_paths(c).faces_db)
+        rows = [
+            {
+                "photo_hash": ph["hash"],
+                "name": ph["name"],
+                "status": ph["status"],
+                "n_faces": int(ph["n_faces"] or 0),
+                "width": int(ph["width"] or 0),
+                "height": int(ph["height"] or 0),
+                "error": ph["error"] or "",
+            }
+            for ph in cdb.photos(batch=b)
+        ]
+        return {"batch": b, "class": c, "count": len(rows), "photos": rows}
+
+    @api.post("/api/batch/photos")
+    async def batch_photo_add(
+        class_name: str = Form(...),
+        batch: str = Form(...),
+        files: list[UploadFile] = File(...),
+    ):
+        """往已有活动里追加照片，然后重跑识别、匹配与归档。"""
+        try:
+            c = safe_name(class_name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        target = app_paths.photos / batch
+        if not target.exists():
+            raise HTTPException(404, f"活动「{batch}」的照片文件夹不存在")
+        used: set[str] = set()
+        saved: list[Path] = []
+        for upload in files:
+            item = await _save_upload(upload, target, used)
+            if item:
+                saved.append(item)
+        if not saved:
+            raise HTTPException(400, "没有收到可用图片；支持 JPG、PNG、WEBP、BMP、TIFF")
+        try:
+            stats = run_batch(app_paths, c, batch)
+            view = compute_batch(app_paths, c, batch)
+            rebuilt = rebuild_impl(app_paths, c, batch, view=view)
+        except UserError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "class": c, "batch": batch, "saved": len(saved),
+            "run": stats.as_dict(), "rebuild": rebuilt,
+            "summary": _summary(app_paths, c, batch),
+        }
+
+    @api.post("/api/photo/delete")
+    def photo_delete(req: PhotoDeleteReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        cdb = ClassDB(app_paths.class_paths(c).faces_db)
+        ph = cdb.photo(req.photo_hash)
+        if not ph:
+            raise HTTPException(404, "照片不存在")
+        if ph["batch"] != req.batch:
+            raise HTTPException(400, "这张照片不属于该活动")
+        _unlink_photo(Path(ph["abs"]))
+        cdb.delete_photo(req.photo_hash)
+        rematch(app_paths, c, req.batch)
+        rebuild_impl(app_paths, c, req.batch)
+        return {"deleted": req.photo_hash, "batch": req.batch,
+                "summary": _summary(app_paths, c, req.batch)}
+
+    @api.post("/api/batch/delete")
+    def batch_delete(req: BatchDeleteReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        cdb = ClassDB(app_paths.class_paths(c).faces_db)
+        photos = cdb.photos(batch=req.batch)
+        if not photos:
+            raise HTTPException(404, "活动不存在或没有照片")
+        if req.delete_photos:
+            for ph in photos:
+                _unlink_photo(Path(ph["abs"]))
+        n = cdb.delete_batch(req.batch)
+        StateStore(app_paths.class_paths(c).batch_state).remove(req.batch)
+        shutil.rmtree(app_paths.out / req.batch, ignore_errors=True)
+        if req.delete_photos:
+            shutil.rmtree(app_paths.photos / req.batch, ignore_errors=True)
+        return {"batch": req.batch, "deleted_photos": n, "photos_dir_removed": req.delete_photos}
+
+    @api.post("/api/class/delete")
+    def class_delete(req: ClassDeleteReq):
+        try:
+            name = safe_name(req.class_name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        store = PersonStore(app_paths.persons_db)
+        if not store.klass(name):
+            raise HTTPException(404, "班级不存在")
+        cdb = ClassDB(app_paths.class_paths(name).faces_db)
+        batches = [b["batch"] for b in cdb.batches()]
+        for b in batches:
+            if req.delete_photos:
+                for ph in cdb.photos(batch=b):
+                    _unlink_photo(Path(ph["abs"]))
+                shutil.rmtree(app_paths.photos / b, ignore_errors=True)
+            cdb.delete_batch(b)
+            shutil.rmtree(app_paths.out / b, ignore_errors=True)
+        store.delete_class(name)
+        shutil.rmtree(app_paths.class_paths(name).dir, ignore_errors=True)
+        # 默认班级被删掉就换一个，避免下次打开网页指向一个不存在的班级
+        cfg = app_paths.global_config
+        if cfg.exists():
+            try:
+                data = json.loads(cfg.read_text("utf-8"))
+            except Exception:
+                data = {}
+            if data.get("default_class") == name:
+                left = [x["name"] for x in store.classes()]
+                data["default_class"] = left[0] if left else ""
+                cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+        return {"deleted": name, "batches": len(batches), "photos_deleted": req.delete_photos}
 
     @api.exception_handler(UserError)
     def user_error_handler(request: Request, exc: UserError):
