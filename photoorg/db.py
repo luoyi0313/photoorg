@@ -337,6 +337,19 @@ class PersonStore:
         with self.conn() as con:
             con.execute("UPDATE templates SET active=? WHERE id=?", (1 if active else 0, template_id))
 
+    def membership_count(self, person_id: int) -> int:
+        with self.conn() as con:
+            return int(
+                con.execute("SELECT COUNT(*) FROM members WHERE person_id=?", (person_id,)).fetchone()[0]
+            )
+
+    def delete_templates_for(self, class_id: int, person_id: int) -> int:
+        with self.conn() as con:
+            cur = con.execute(
+                "DELETE FROM templates WHERE class_id=? AND person_id=?", (class_id, person_id)
+            )
+            return int(cur.rowcount)
+
     def delete_template(self, template_id: int) -> None:
         with self.conn() as con:
             con.execute("DELETE FROM templates WHERE id=?", (template_id,))

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#2f6feb">
   <title>照片归档 · 出勤统计</title>
-  <link rel="stylesheet" href="/static/app.css?v=20261031-ui13">
+  <link rel="stylesheet" href="/static/app.css?v=20261031-ui15">
 </head>
 <body>
 <header class="top">
@@ -13,6 +13,7 @@
     <div class="brand"><i class="dot"></i><span>照片归档 · 出勤统计</span></div>
     <div class="controls">
       <label class="field"><span>班级</span><select id="classSelect"></select></label>
+      <button class="btn sm" type="button" onclick="window.PO.openCreateClass()" title="新建班级">＋ 班级</button>
       <label class="field"><span>批次</span><select id="batchSelect"></select></label>
       <span id="statePill" class="pill grey">加载中</span>
     </div>
@@ -37,6 +38,6 @@
 </header>
 <main id="main"><div class="empty"><div class="big">⏳</div>正在读取本地数据…</div></main>
 <div id="modalRoot"></div><div id="toasts"></div>
-<script src="/static/app.js?v=20261031-ui13"></script>
+<script src="/static/app.js?v=20261031-ui15"></script>
 </body>
 </html>

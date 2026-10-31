@@ -141,12 +141,12 @@
 
   function inspect() { const d=S.data; $('#main').innerHTML=`<div class="card"><div class="row"><h2>结果审查</h2><span class="muted small">按人看照片；点击照片可查看每张脸并改判。</span><span class="right"><button class="btn sm" onclick="window.PO.showDiff()">自动 vs 人工</button></span></div>${d.persons.map(personRow).join('')}</div>`; }
 
-  async function gallery() { $('#main').innerHTML='<div class="empty"><div class="big">⏳</div>读取底库健康度…</div>'; const r=await api('/api/gallery/health?'+clsQ()); S.gallery=r; $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>底库管理</h2><span class="muted small">每个人建议 3～10 张；多样性比数量更重要。</span></div><span class="right"><button class="btn" onclick="window.PO.openGalleryTreeUpload()">一键上传（人名文件夹）</button><button class="btn primary" onclick="window.PO.openGalleryUpload()">+ 上传底库参考照片</button></span></div><div class="hint">一个人一个人传：选择名下的多张清晰参考照即可。整班一起传：选一个父文件夹，<b>子文件夹名=人名</b>，里面的照片就是那个人的底库照。系统会自动找主脸、做质量门控和去重。</div><table class="tbl" style="margin-top:12px"><thead><tr><th>人员</th><th class="num">模板</th><th class="num">平均质量</th><th>健康提示</th><th style="text-align:right;white-space:nowrap">操作</th></tr></thead><tbody>${r.persons.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="num">${p.n_templates}</td><td class="num">${p.quality.toFixed(2)}</td><td>${p.warnings?.length?`<span style="color:var(--warn)">⚠ ${esc(p.warnings.join('；'))}</span>`:'<span style="color:var(--ok)">✅ 健康</span>'}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="window.PO.openGallery(${p.person_id},'${esc(p.name)}')">查看模板</button> <button class="btn sm" onclick="window.PO.renamePerson(${p.person_id})">改名</button></td></tr>`).join('')}</tbody></table></div>`; }
+  async function gallery() { $('#main').innerHTML='<div class="empty"><div class="big">⏳</div>读取底库健康度…</div>'; const r=await api('/api/gallery/health?'+clsQ()); S.gallery=r; $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>底库管理</h2><span class="muted small">每个人建议 3～10 张；多样性比数量更重要。</span></div><span class="right"><button class="btn" onclick="window.PO.openGalleryTreeUpload()">一键上传（人名文件夹）</button><button class="btn primary" onclick="window.PO.openGalleryUpload()">+ 上传底库参考照片</button></span></div><div class="hint">一个人一个人传：选择名下的多张清晰参考照即可。整班一起传：选一个父文件夹，<b>子文件夹名=人名</b>，里面的照片就是那个人的底库照。系统会自动找主脸、做质量门控和去重。</div><table class="tbl" style="margin-top:12px"><thead><tr><th>人员</th><th class="num">模板</th><th class="num">平均质量</th><th>健康提示</th><th style="text-align:right;white-space:nowrap">操作</th></tr></thead><tbody>${r.persons.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="num">${p.n_templates}</td><td class="num">${p.quality.toFixed(2)}</td><td>${p.warnings?.length?`<span style="color:var(--warn)">⚠ ${esc(p.warnings.join('；'))}</span>`:'<span style="color:var(--ok)">✅ 健康</span>'}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="window.PO.openGallery(${p.person_id},'${esc(p.name)}')">查看模板</button> <button class="btn sm" onclick="window.PO.renamePerson(${p.person_id})">改名</button> <button class="btn sm danger" onclick="window.PO.confirmDeletePerson(${p.person_id})">删除</button></td></tr>`).join('')}</tbody></table></div>`; }
 
   async function clusters(threshold=0.55,minSize=2) { $('#main').innerHTML='<div class="empty"><div class="big">🧩</div>正在扫描本活动中的未知人脸…</div>'; try { const r=await api('/api/clusters?'+batchQ()+`&only_unknown=true&threshold=${threshold}&min_size=${minSize}`); $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>冷启动聚类：给“陌生人”建底库</h2><p class="muted">适合第一次使用、还没有完整底库时：系统把本活动中反复出现但还不认识的脸放在一起。确认它们是同一个人后，给这一组输入姓名，系统就会创建人员并把这些脸加入底库。</p></div></div><div class="hint"><b>什么时候用？</b>活动照片里有人被标成“名单外 / 不认识”，但你希望下次能自动识别时使用。<br><b>什么时候不用？</b>如果已经有完整底库、也没有未知人脸，可以忽略此页。</div><div class="row" style="margin-top:12px"><label class="small">相似度要求<br><input id="clusterThreshold" type="number" min="0.30" max="0.95" step="0.05" value="${threshold}" style="width:100px"></label><label class="small">最少出现次数<br><input id="clusterMinSize" type="number" min="2" max="20" step="1" value="${minSize}" style="width:80px"></label><button class="btn primary" onclick="window.PO.runClusters()">扫描并开始聚类</button></div><p class="muted small">相似度越高，分组越严格；通常保持默认值即可。只扫描当前活动中尚未认识的人脸，不会改变已有识别结果。</p></div><div class="card" style="margin-top:14px"><div class="row"><h2>扫描结果</h2><span class="muted small">${r.clusters.length?'找到 '+r.clusters.length+' 组可命名人脸':'没有找到重复出现的未知人脸'}</span></div>${r.clusters.length?r.clusters.map(c=>`<div class="person"><div class="who"><div class="nm">同一人候选组 #${c.cid}</div><div class="muted small">在 ${c.size} 张脸中重复出现</div><button class="btn sm primary" onclick="window.PO.acceptCluster(${c.cid})">确认同一人并命名</button></div><div class="thumbs">${c.members.map(m=>`<div class="thumb"><img src="${m.crop}"><span class="tag">${esc(m.photo_name)}</span></div>`).join('')}</div></div>`).join(''):empty('🧩','当前没有可聚类的人脸','这通常表示：所有人已经识别完成，或未知人脸只各出现一次。你可以上传更多活动照片后再点“扫描并开始聚类”。')}</div>`; S.clusters=r.clusters; } catch(e) { $('#main').innerHTML=empty('🧩','暂时不能聚类',e.message); } }
   function runClusters(){const t=Number($('#clusterThreshold')?.value)||0.55, n=Number($('#clusterMinSize')?.value)||2;clusters(t,n);}
 
-  async function settings() { $('#main').innerHTML=`<section class="card"><h2>设置与审计：日常通常不需要操作</h2><p class="muted">这里放的是“纠错、追溯和重建”工具。正常流程只需上传底库、上传活动照片、复核后发布；只有出现下面的特殊情况时才需要来这里。</p><div class="grid c3"><div class="hint"><b>① 我手动改了归档文件夹</b><br>例如在资源管理器里把一张照片拖给了另一个人：点“吸收手动拖动”，把变化写回系统，避免下次重建丢失。</div><div class="hint"><b>② 想恢复整理后的归档</b><br>如果 out/ 文件夹被误删或混乱，点顶部“重建归档”。原始活动照片和识别结论不会丢。</div><div class="hint"><b>③ 想追查谁改过结果</b><br>在下面的审计日志查看人工确认、改判、移出和发布等操作；也可导出 CSV 留档。</div></div></section><div class="split" style="margin-top:14px"><section class="card"><h2>识别阈值校准（高级）</h2><p class="muted">当你已经人工复核过许多灰区，才建议生成阈值建议。它不会自动改动；采纳后会影响历史批次重新匹配的判断。</p><button class="btn" onclick="window.PO.calibrate()">生成校准建议</button><div id="calResult" style="margin-top:12px"></div></section><section class="card"><h2>手动文件调整</h2><p class="muted">通常直接在网页“结果审查”里改判更安全。只有你确实在 Finder / 资源管理器中手动移动 out/ 下的归档照片时，才使用此功能。</p><button class="btn" onclick="window.PO.adopt()">吸收手动拖动</button> <a class="btn" href="/api/export/overrides.csv?${batchQ()}">导出人工修正 CSV</a><p class="muted small">人工修正会保留完整时间和原因记录，方便撤销和追溯。</p></section></div><section class="card" style="margin-top:14px"><div class="row"><div><h2>最近审计日志</h2><span class="muted small">记录所有人工确认、改判、移出、吸收和发布操作。</span></div><button class="btn sm right" onclick="window.PO.showAudit()">刷新日志</button></div><div id="auditLog" class="muted">正在读取…</div></section><section class="card" style="margin-top:14px"><div class="row"><div><h2>删除班级（危险）</h2><span class="muted small">会删除「${esc(S.cls||'—')}」的名单关系、底库模板、识别数据与 out/ 归档。</span></div><button class="btn danger right" onclick="window.PO.confirmDeleteClass()">删除班级</button></div><p class="muted small" style="margin-top:8px">提示：删除活动请到「活动照片」页，那里有「删除本活动」；只想删掉某张照片也在那一页。</p></section>`; showAudit(); }
+  async function settings() { $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>班级管理</h2><span class="muted small">新建班级，或删除不再需要的班级。</span></div></div><div class="row" style="margin-top:10px"><input id="newClassName" type="text" placeholder="新班级名，例如 三年二班" style="width:240px"><button class="btn primary" onclick="window.PO.createClass()">新建班级</button></div><table class="tbl" style="margin-top:12px"><thead><tr><th>班级</th><th class="num">名单</th><th class="num">模板</th><th style="text-align:right">操作</th></tr></thead><tbody>${(S.boot.classes||[]).map(x=>`<tr><td><b>${esc(x.name)}</b>${x.name===S.cls?' <span class="pill reviewed" style="height:20px;font-size:11px">当前</span>':''}</td><td class="num">${x.n_persons}</td><td class="num">${x.n_templates}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm danger" onclick="window.PO.confirmDeleteClass(this.dataset.cls)" data-cls="${esc(x.name)}">删除</button></td></tr>`).join('')}</tbody></table><p class="muted small" style="margin-top:8px">删除班级会移除名单关系、底库模板、识别数据与 out/ 归档；删除活动请到「活动照片」页。</p></section><section class="card"><h2>设置与审计：日常通常不需要操作</h2><p class="muted">这里放的是“纠错、追溯和重建”工具。正常流程只需上传底库、上传活动照片、复核后发布；只有出现下面的特殊情况时才需要来这里。</p><div class="grid c3"><div class="hint"><b>① 我手动改了归档文件夹</b><br>例如在资源管理器里把一张照片拖给了另一个人：点“吸收手动拖动”，把变化写回系统，避免下次重建丢失。</div><div class="hint"><b>② 想恢复整理后的归档</b><br>如果 out/ 文件夹被误删或混乱，点顶部“重建归档”。原始活动照片和识别结论不会丢。</div><div class="hint"><b>③ 想追查谁改过结果</b><br>在下面的审计日志查看人工确认、改判、移出和发布等操作；也可导出 CSV 留档。</div></div></section><div class="split" style="margin-top:14px"><section class="card"><h2>识别阈值校准（高级）</h2><p class="muted">当你已经人工复核过许多灰区，才建议生成阈值建议。它不会自动改动；采纳后会影响历史批次重新匹配的判断。</p><button class="btn" onclick="window.PO.calibrate()">生成校准建议</button><div id="calResult" style="margin-top:12px"></div></section><section class="card"><h2>手动文件调整</h2><p class="muted">通常直接在网页“结果审查”里改判更安全。只有你确实在 Finder / 资源管理器中手动移动 out/ 下的归档照片时，才使用此功能。</p><button class="btn" onclick="window.PO.adopt()">吸收手动拖动</button> <a class="btn" href="/api/export/overrides.csv?${batchQ()}">导出人工修正 CSV</a><p class="muted small">人工修正会保留完整时间和原因记录，方便撤销和追溯。</p></section></div><section class="card" style="margin-top:14px"><div class="row"><div><h2>最近审计日志</h2><span class="muted small">记录所有人工确认、改判、移出、吸收和发布操作。</span></div><button class="btn sm right" onclick="window.PO.showAudit()">刷新日志</button></div><div id="auditLog" class="muted">正在读取…</div></section>`; showAudit(); }
 
   async function openPhoto(hash) { try { const d=await api('/api/photo/'+hash+'?'+clsQ()); S.photoFaces=S.photoFaces||{}; S.photoFaces[hash]=d; const faces=d.faces; const labels=faces.map(f=>`<div class="facechip"><img src="/api/crop/${hash}/${f.face_idx}?size=100"><span><b>${esc(f.person_name||'未知')}</b><br><small>${esc(f.status)} · ${f.score.toFixed(2)} ${f.manual?'· 人工':''}</small></span><button class="btn sm" onclick="window.PO.openFaceDecision('${hash}',${f.face_idx})">改判</button></div>`).join(''); modal(`<div class="head"><h2>${esc(d.name||hash.slice(0,8))}</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="photo-stage"><img id="photoStageImg" src="/api/image/${hash}?max=1500" onload="window.PO.drawFaces(this,'${hash}')"><div id="faceBoxes"></div></div><h3 style="margin-top:12px">照片内人脸</h3><div>${labels||'未检出脸'}</div><div class="hint">“移出此人”要在对应人员缩略图中操作；“改判”会同时更新脸层和照片×人层结论。</div>`); } catch(e){toast(e.message,'bad');} }
   async function openFaceDecision(hash,idx) { const d=S.photoFaces?.[hash] || await api('/api/photo/'+hash+'?'+clsQ()); const f=d.faces.find(x=>x.face_idx===idx); const roster=S.data.persons.map(p=>`<option value="${p.person_id}" ${p.person_id===f.person_id?'selected':''}>${esc(p.name)}</option>`).join(''); modal(`<div class="head"><h2>改判这张脸</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="row"><img style="width:160px;height:160px;object-fit:cover;border-radius:10px" src="/api/crop/${hash}/${idx}?size=300"><div><p>自动候选：<b>${esc(f.person_name||'未知')}</b> · ${f.score.toFixed(2)}</p><select id="facePerson">${roster}</select><div class="row" style="margin-top:12px"><button class="btn primary" onclick="window.PO.setFace('${hash}',${idx})">确认/改判</button><button class="btn" onclick="window.PO.setFaceUnknown('${hash}',${idx})">不认识</button>${f.person_id?`<button class="btn danger" onclick="window.PO.setPair('${hash}',${f.person_id},'absent')">移出 ${esc(f.person_name)}</button>`:''}</div><div class="row" style="margin-top:8px"><button class="btn sm" onclick="window.PO.addTemplate('${hash}',${idx})">加为模板</button><span class="muted small">把这张脸加入所选人员的底库（会过质量门控与去重，不合格会说明原因）</span></div></div></div>`); }
@@ -171,48 +171,86 @@
   function openActivityUpload() { const today=new Date().toISOString().slice(0,10); modal(`<div class="head"><h2>新建活动并上传照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><form id="activityUploadForm"><p class="muted">文件夹名称会自动变成 <b>日期-活动名</b>。例如：2026-10-31 秋游 → <code class="inline">20261031-秋游</code>。</p><div class="grid c3"><label>班级<br><input id="uploadClass" type="text" value="${esc(S.cls)}" required></label><label>活动日期<br><input id="activityDate" type="date" value="${today}" required></label><label>活动名称<br><input id="activityName" type="text" placeholder="例如：秋游" required></label></div><div style="margin-top:14px"><label><b>活动照片文件夹</b><br><input id="activityFiles" type="file" accept="image/*,.heic" multiple webkitdirectory directory required></label><div class="muted small">点击后请选择整个照片文件夹；也可以改为手动多选照片。照片只保存到本机的 <code class="inline">photos/</code>。</div></div><div id="activityUploadInfo" class="hint" style="margin-top:12px">尚未选择照片。</div><div class="row" style="margin-top:14px"><button class="btn primary" type="submit">上传并自动识别</button><button class="btn" type="button" onclick="window.PO.closeModal()">取消</button></div></form>`); const f=$('#activityFiles');f.onchange=()=>{const n=f.files.length;setText('#activityUploadInfo',n?`已选择 ${n} 个文件；上传后会自动检测、匹配、归档并生成报告。`:'尚未选择照片。');}; $('#activityUploadForm').onsubmit=submitActivityUpload; }
   async function submitActivityUpload(e) { e.preventDefault(); const files=$('#activityFiles').files; if(!files.length){toast('请选择活动照片文件夹或照片','bad');return;} const form=new FormData();form.append('class_name',$('#uploadClass').value.trim());form.append('activity',$('#activityName').value.trim());form.append('activity_date',$('#activityDate').value);for(const f of files)form.append('files',f,f.webkitRelativePath||f.name); const btn=e.target.querySelector('[type=submit]');btn.disabled=true;btn.textContent=`正在上传 ${files.length} 张并识别…`;setText('#activityUploadInfo','正在本机处理；照片数量多时请保持本页面打开。');try{const res=await fetch('/api/activity/upload',{method:'POST',body:form});const d=await res.json();if(!res.ok)throw new Error(d.detail||'上传失败');S.cls=d.class;S.batch=d.batch;closeModal();toast(`活动「${d.batch}」完成：${d.summary.present} 条出现，${d.summary.review} 条待复核`,'ok');const moved=d.run?.moved_out||[];if(moved.length)toast(`照片搬家：${moved.map(m=>`${m.n} 张原属「${m.batch}」，已移入本批次；该批次已退回待复核`).join('；')}`,'');await refresh();}catch(err){toast(err.message,'bad');if(btn?.isConnected){btn.disabled=false;btn.textContent='上传并自动识别';} } }
 
-  const parseTree = (files) => {
-    const map = new Map();
-    let rootFiles = 0;
+  // 从选择结果里推断「哪一层目录是人名」。
+  // 用户选中的根目录可能多套了一层（例如 桌面/底库/张三/1.jpg），
+  // 所以不能写死第二段，而是把每一层都算一遍，默认取「名字最多」的那层。
+  const treeLevels = (files) => {
+    const levels = new Map(); // depth -> Map(person -> count)
+    let tooShallow = 0;
     for (const f of files) {
       const parts = (f.webkitRelativePath || f.name).split('/').filter(Boolean);
-      if (parts.length < 3) { rootFiles += 1; continue; }
-      const person = parts[1];
-      if (!map.has(person)) map.set(person, []);
-      map.get(person).push(f);
+      if (parts.length < 3) { tooShallow += 1; continue; }
+      for (let d = 1; d <= parts.length - 2; d += 1) {
+        const name = parts[d];
+        if (!levels.has(d)) levels.set(d, new Map());
+        const m = levels.get(d);
+        m.set(name, (m.get(name) || 0) + 1);
+      }
     }
-    return { map, rootFiles };
+    let best = 1, bestCount = -1;
+    for (const [d, m] of levels) {
+      if (m.size > bestCount || (m.size === bestCount && d < best)) { best = d; bestCount = m.size; }
+    }
+    return { levels, best, tooShallow };
+  };
+  const renderTreeLevels = () => {
+    const f = $('#treeFiles'), sel = $('#treeDepth');
+    if (!f || !sel) return;
+    const { levels, best, tooShallow } = treeLevels(f.files);
+    if (!levels.size) {
+      sel.style.display = 'none';
+      setText('#treeInfo', '没有识别到子文件夹，请确认选择的是「包含人名子文件夹」的父文件夹。');
+      return;
+    }
+    sel.style.display = '';
+    sel.innerHTML = [...levels.entries()].sort((a, b) => a[0] - b[0]).map(([d, m]) => {
+      const names = [...m.keys()];
+      const total = [...m.values()].reduce((a, b) => a + b, 0);
+      const preview = names.slice(0, 3).join('、') + (names.length > 3 ? ' 等' : '');
+      return `<option value="${d}" ${d === best ? 'selected' : ''}>第 ${d} 层：${esc(preview)}（${names.length} 人 / ${total} 张）</option>`;
+    }).join('');
+    updateTreeInfo(tooShallow);
+  };
+  const updateTreeInfo = (tooShallow) => {
+    const f = $('#treeFiles'), sel = $('#treeDepth');
+    if (!f || !sel || !sel.value) return;
+    const { levels, tooShallow: ts } = treeLevels(f.files);
+    const m = levels.get(Number(sel.value));
+    if (!m) return;
+    const total = [...m.values()].reduce((a, b) => a + b, 0);
+    const shallow = tooShallow === undefined ? ts : tooShallow;
+    setText('#treeInfo', `按第 ${sel.value} 层分组：识别到 ${m.size} 个人、${total} 张图片${shallow ? `；另有 ${shallow} 张层级太浅将被忽略` : ''}。`);
   };
   function openGalleryTreeUpload() {
     modal(`<div class="head"><h2>一键上传底库文件夹</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
-      <p class="muted">选择整个父文件夹。系统把每个子文件夹的名字当作人名，把它里面的照片当作这个人的底库参考照，一次把所有人生成模板。</p>
+      <p class="muted">选择整个父文件夹。系统把子文件夹的名字当作人名，把它里面的照片当作这个人的底库参考照，一次把所有人生成模板。</p>
       <pre class="tree">底库/
   张三/   1.jpg  2.jpg  3.jpg
   李四/   1.jpg  2.jpg</pre>
       <input id="treeFiles" type="file" accept="image/*,.heic" multiple webkitdirectory directory>
+      <div id="treeDepthRow" class="row" style="margin-top:12px;display:none"><label class="small">按哪一层目录当人名<br><select id="treeDepth" onchange="window.PO.updateTreeInfo()"></select></label><button class="btn sm" type="button" onclick="window.PO.renderTreeLevels()">重新识别</button></div>
       <div id="treeInfo" class="hint" style="margin-top:10px">尚未选择文件夹。</div>
-      <div class="hint" style="margin-top:8px">根目录下直接放的照片会被忽略；已存在的人员会追加模板，不会覆盖旧底库。</div>
+      <div class="hint" style="margin-top:8px">根目录下直接放的照片会被忽略；已存在的人员会追加模板，不会覆盖旧底库。如果多套了一层父目录（如 桌面/底库/张三/图），用上面的下拉选「第 2 层」即可。</div>
       <div class="row" style="margin-top:14px"><button class="btn primary" id="treeSubmit" onclick="window.PO.submitGalleryTree()">上传并注册</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
     const f = $('#treeFiles');
-    if (f) f.onchange = () => {
-      const { map, rootFiles } = parseTree(f.files);
-      const total = [...map.values()].reduce((a, x) => a + x.length, 0);
-      setText('#treeInfo', map.size
-        ? `识别到 ${map.size} 个人名文件夹、${total} 张图片${rootFiles ? `；另有 ${rootFiles} 张在根目录将被忽略` : ''}。`
-        : '没有识别到子文件夹，请确认选择的是「包含人名子文件夹」的父文件夹。');
-    };
+    if (f) f.onchange = () => { const row = $('#treeDepthRow'); if (row) row.style.display = 'flex'; renderTreeLevels(); };
   }
   async function submitGalleryTree() {
     const f = $('#treeFiles');
     if (!f?.files?.length) { toast('请先选择包含人名子文件夹的文件夹', 'bad'); return; }
-    const { map } = parseTree(f.files);
-    if (!map.size) { toast('没有找到「人名/图片」结构', 'bad'); return; }
+    const sel = $('#treeDepth');
+    const depth = Number(sel?.value || 1);
+    const { levels } = treeLevels(f.files);
+    const m = levels.get(depth);
+    if (!m) { toast('没有找到「人名/图片」结构', 'bad'); return; }
+    const total = [...m.values()].reduce((a, b) => a + b, 0);
     const form = new FormData();
     form.append('class_name', S.cls);
+    form.append('depth', String(depth));
     for (const file of f.files) form.append('files', file, file.webkitRelativePath || file.name);
     const btn = $('#treeSubmit');
     if (btn) { btn.disabled = true; btn.textContent = '正在处理…'; }
-    setText('#treeInfo', `正在注册 ${map.size} 个人、${f.files.length} 张图片；首次识别较慢，请保持页面打开。`);
+    setText('#treeInfo', `正在注册 ${m.size} 个人、${total} 张图片；首次识别较慢，请保持页面打开。`);
     try {
       const res = await fetch('/api/gallery/upload_tree', { method: 'POST', body: form });
       const d = await res.json();
@@ -286,8 +324,35 @@
   async function applyCal(hi,lo,margin){if(!confirm('阈值变化会影响历史批次的结论。确定采纳？'))return;try{await post('/api/calibrate/apply',{batch:S.batch,t_high:hi,t_low:lo,margin,by:operator()});toast('阈值已保存；重建或重跑匹配后生效','ok');}catch(e){toast(e.message,'bad');}}
   async function showAudit(){try{const r=await api('/api/audit?'+batchQ());const el=$('#auditLog');if(!el)return;el.innerHTML=r.items.length?`<table class="tbl"><thead><tr><th>时间</th><th>动作</th><th>照片</th><th>人员</th><th>来源 / 原因</th></tr></thead><tbody>${r.items.map(x=>`<tr><td>${esc(x.at.slice(0,16).replace('T',' '))}</td><td>${esc(x.scope)} · ${esc(x.action)}${x.superseded?'（已撤销）':''}</td><td>${esc(x.photo)}</td><td>${esc(x.person)}</td><td>${esc(x.source)} ${esc(x.reason||'')}</td></tr>`).join('')}</tbody></table>`:'暂无人工修正。';}catch(e){toast(e.message,'bad');}}
   async function showDiff(){try{const r=await api('/api/diff?'+batchQ());modal(`<div class="head"><h2>纯自动 vs 含人工</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><p>纯自动 <b>${r.diff.auto_total}</b> 条，含人工 <b>${r.diff.final_total}</b> 条。</p><table class="tbl"><thead><tr><th>人员</th><th>自动</th><th>最终</th><th>变化</th><th>人工加/减</th></tr></thead><tbody>${r.diff.persons.filter(x=>x.delta||x.manual_added||x.manual_removed).map(x=>`<tr><td>${esc(x.name)}</td><td>${x.auto}</td><td>${x.final}</td><td>${x.delta>0?'+':''}${x.delta}</td><td>${x.manual_added}/${x.manual_removed}</td></tr>`).join('')||'<tr><td colspan="5">尚无人工差异</td></tr>'}</tbody></table>`);}catch(e){toast(e.message,'bad');}}
-  async function openGallery(pid,name){try{const r=await api('/api/gallery?person_id='+pid+'&'+clsQ());modal(`<div class="head"><h2>${esc(name)} 的模板</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="thumbs">${r.templates.map(t=>`<div class="thumb"><img src="${t.url}?${clsQ()}"><span class="tag">${t.quality.toFixed(2)} · ${esc(t.source)}</span></div>`).join('')||'<span class="muted">还没有模板</span>'}</div><p class="hint">如需从活动照片补模板，请在“结果审查”打开照片，选中对应脸，点“加为模板”。</p>`);}catch(e){toast(e.message,'bad');}}
+  async function openGallery(pid,name){try{const r=await api('/api/gallery?person_id='+pid+'&'+clsQ());modal(`<div class="head"><h2>${esc(name)} 的模板</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="thumbs">${r.templates.map(t=>`<div class="thumb"><img src="${t.url}?${clsQ()}"><span class="tag">${t.quality.toFixed(2)} · ${esc(t.source)}</span><button class="thumb-del" title="删除这张模板" onclick="event.stopPropagation();window.PO.removeTemplate(${t.id},${pid},'${esc(name)}')">✕</button></div>`).join('')||'<span class="muted">还没有模板</span>'}</div><p class="hint">如需从活动照片补模板，请在“结果审查”打开照片，选中对应脸，点“加为模板”。</p>`);}catch(e){toast(e.message,'bad');}}
   // 人名是唯一标识之外唯一会出现在报告和归档目录里的东西，改名后要重建 out/。
+  function confirmDeletePerson(pid) {
+    const p = (S.gallery?.persons||[]).find(x=>x.person_id===pid) || (S.data?.persons||[]).find(x=>x.person_id===pid);
+    if (!p) { toast('找不到这个人员','bad'); return; }
+    modal(`<div class="head"><h2>从本班删除「${esc(p.name)}」</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
+      <p>会删除这个人的 <b>${p.n_templates ?? '—'} 张底库模板</b>，并把他从当前班级名单移除；相关活动的出勤结论会重新计算。</p>
+      <p class="muted small">历史照片和人工修正记录不会删除。如果这个人还在别的班级，只从当前班级移除。</p>
+      <div class="row" style="margin-top:14px"><button class="btn danger" onclick="window.PO.doDeletePerson(${pid})">确认删除</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
+  }
+  async function doDeletePerson(pid) {
+    try {
+      const r = await post('/api/person/delete',{person_id:pid,class_name:S.cls});
+      closeModal();
+      toast(`已从本班删除「${r.deleted}」，重建了 ${r.batches} 个批次`,'ok');
+      await refresh();
+      if (S.page === 'gallery') gallery();
+    } catch(e) { toast(e.message,'bad'); }
+  }
+  async function removeTemplate(tid, pid, name) {
+    if (!confirm('删除这张底库模板？删除后不能恢复。')) return;
+    try {
+      await post('/api/gallery/remove?template_id='+tid+'&'+clsQ(), {});
+      toast('模板已删除','ok');
+      await refresh();
+      if (S.page === 'gallery') gallery();
+      openGallery(pid, name);
+    } catch(e) { toast(e.message,'bad'); }
+  }
   async function renamePerson(pid) {
     const p = (S.gallery?.persons||[]).find(x=>x.person_id===pid) || (S.data?.persons||[]).find(x=>x.person_id===pid);
     if(!p){ toast('找不到这个人员','bad'); return; }
@@ -402,19 +467,45 @@
   }
 
   // ---------------- 删除班级
-  function confirmDeleteClass() {
-    const cls=S.cls; if(!cls){ toast('还没有班级','bad'); return; }
+  async function _createClass(name) {
+    name = (name || '').trim();
+    if (!name) { toast('请输入班级名', 'bad'); return; }
+    try {
+      const r = await post('/api/class/create', { name });
+      closeModal();
+      toast(r.created ? `已创建班级「${r.name}」` : `班级「${r.name}」已存在`, r.created ? 'ok' : '');
+      S.cls = r.name; S.batch = '';
+      await refresh();
+      if (S.page === 'settings') settings();
+    } catch(e) { toast(e.message, 'bad'); }
+  }
+  async function createClass() { await _createClass($('#newClassName')?.value); }
+  function openCreateClass() {
+    modal(`<div class="head"><h2>新建班级</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
+      <p class="muted">班级之间的数据完全独立：名单、底库、活动、出勤统计都分开。创建后会立即切换到新班级。</p>
+      <input id="newClassModalName" type="text" placeholder="例如 三年二班" style="width:280px" onkeydown="if(event.key==='Enter'){event.preventDefault();window.PO.createClassFromModal();}">
+      <div class="row" style="margin-top:14px"><button class="btn primary" onclick="window.PO.createClassFromModal()">创建并切换</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
+    setTimeout(() => $('#newClassModalName')?.focus(), 50);
+  }
+  async function createClassFromModal() { await _createClass($('#newClassModalName')?.value); }
+  function confirmDeleteClass(name) {
+    const cls = name || S.cls;
+    if (!cls) { toast('还没有班级','bad'); return; }
+    S.deleteClass = cls;
     modal(`<div class="head"><h2>删除班级「${esc(cls)}」</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><p>会删除这个班的：名单关系、底库模板、全部活动的识别数据与 out/ 归档。此操作不可撤销。</p><label class="row" style="gap:8px;justify-content:flex-start"><input id="delClassPhotos" type="checkbox"> 同时删除该班 photos/ 下的原始照片文件（更危险）</label><div class="row" style="margin-top:14px"><button class="btn danger" onclick="window.PO.doDeleteClass()">确认删除</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
   }
   async function doDeleteClass() {
-    const del=!!$('#delClassPhotos')?.checked;
+    const cls = S.deleteClass || S.cls;
+    const del = !!$('#delClassPhotos')?.checked;
     try {
-      const r=await post('/api/class/delete',{class_name:S.cls,delete_photos:del});
+      const r = await post('/api/class/delete', { class_name: cls, delete_photos: del });
       closeModal(); toast(`已删除班级「${r.deleted}」`,'ok');
-      S.cls=''; S.batch=''; S.page='overview'; await refresh(); render();
+      if (S.cls === cls) { S.cls = ''; S.batch = ''; }
+      await refresh();
+      if (S.page === 'settings') settings();
     } catch(e){ toast(e.message,'bad'); }
   }
 
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,renderTreeLevels,updateTreeInfo,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,confirmDeletePerson,doDeletePerson,removeTemplate,createClass,openCreateClass,createClassFromModal,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();

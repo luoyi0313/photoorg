@@ -129,6 +129,15 @@ class PersonReq(BaseModel):
     class_name: str = ""
 
 
+class PersonDeleteReq(BaseModel):
+    person_id: int
+    class_name: str = ""
+
+
+class ClassReq(BaseModel):
+    name: str
+
+
 class RenameReq(BaseModel):
     person_id: int
     new_name: str
@@ -481,6 +490,7 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
     @api.post("/api/gallery/upload_tree")
     async def gallery_upload_tree(
         class_name: str = Form(...),
+        depth: int = Form(1),
         files: list[UploadFile] = File(...),
     ):
         """一键入库：父文件夹 → 子文件夹名即人名 → 子文件夹里的图片即该人底库照。
@@ -495,15 +505,17 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         if not files:
             raise HTTPException(400, "请选择包含人名子文件夹的整个文件夹")
 
+        depth = max(1, min(6, int(depth or 1)))
         groups: dict[str, list[UploadFile]] = {}
         skipped_files = 0
         for upload in files:
             parts = Path(upload.filename or "").parts
-            if len(parts) < 3:  # 直接放在父文件夹里的图片没有归属，跳过
+            # 需要「根 + depth 段目录 + 文件名」；depth=1 时就是 根/人名/图片
+            if len(parts) < depth + 2:
                 skipped_files += 1
                 continue
             try:
-                person = safe_name(parts[1])
+                person = safe_name(parts[depth])
             except ValueError:
                 skipped_files += 1
                 continue
@@ -961,6 +973,67 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         except HTTPException:
             pass
         return {"removed": person_id}
+
+    @api.post("/api/person/delete")
+    def person_delete(req: PersonDeleteReq):
+        """从当前班级删除一个人：清掉他的模板与底库文件，重建所有批次。"""
+        c = _class(req.class_name or None)
+        store = PersonStore(app_paths.persons_db)
+        person = store.person(req.person_id)
+        if not person:
+            raise HTTPException(404, "人员不存在")
+        klass = store.klass(c)
+        if not klass:
+            raise HTTPException(404, "班级不存在")
+        class_id = int(klass["id"])
+        if req.person_id not in {int(r["id"]) for r in store.roster(class_id)}:
+            raise HTTPException(404, "这个人不在当前班级")
+
+        cp = app_paths.class_paths(c)
+        gallery_dir = cp.person_gallery(person["name"])
+        shutil.rmtree(gallery_dir, ignore_errors=True)
+        store.delete_templates_for(class_id, req.person_id)
+        store.remove_member(class_id, req.person_id)
+        # 只有这个人不再属于任何班级时，才删全局 persons 记录
+        if store.membership_count(req.person_id) == 0:
+            store.delete_person(req.person_id)
+
+        cdb = ClassDB(cp.faces_db)
+        sstore = StateStore(cp.batch_state)
+        touched = 0
+        for b in cdb.batches():
+            try:
+                if cdb.pairs(batch=b["batch"], person_id=req.person_id):
+                    sstore.note_edit(b["batch"], by="ui", note=f"删除人员「{person['name']}」")
+            except Exception:
+                pass
+            rebuild_impl(app_paths, c, b["batch"])
+            touched += 1
+        return {"person_id": req.person_id, "deleted": person["name"], "batches": touched}
+
+    @api.post("/api/class/create")
+    def class_create(req: ClassReq):
+        try:
+            name = safe_name(req.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        store = PersonStore(app_paths.persons_db)
+        existed = store.klass(name) is not None
+        store.upsert_class(name)
+        app_paths.class_paths(name).ensure()
+        if not existed:
+            cfg = app_paths.global_config
+            data = {}
+            if cfg.exists():
+                try:
+                    data = json.loads(cfg.read_text("utf-8"))
+                except Exception:
+                    data = {}
+            if not data.get("default_class"):
+                data["default_class"] = name
+                cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+        return {"name": name, "created": not existed,
+                "classes": [x["name"] for x in store.classes()]}
 
     @api.post("/api/person/rename")
     def person_rename(req: RenameReq):

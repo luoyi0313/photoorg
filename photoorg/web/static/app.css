@@ -599,3 +599,6 @@ pre.tree {
   font-family: var(--mono); font-size: 12.5px; line-height: 1.75; color: #46506a;
   overflow: auto; white-space: pre;
 }
+
+/* 顶部工具条里的「＋ 班级」与下拉底对齐 */
+.controls .btn { margin-bottom: 3px; }
