@@ -312,6 +312,29 @@
       await refresh();
     } catch(e){ toast(e.message,'bad'); if(btn){btn.disabled=false;btn.textContent='加入本次活动';} }
   }
+  async function copyWechat() {
+    const text = 'luoyi8847';
+    const legacyCopy = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch (e) { return false; }
+    };
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('微信号已复制：' + text, 'ok');
+    } catch (e) {
+      if (legacyCopy()) toast('微信号已复制：' + text, 'ok');
+      else toast('微信号：' + text, '');
+    }
+  }
   async function unpublish() {
     if(!confirm('撤回发布后，报告会变回草稿，需要重新确认才能再次发布。确定？')) return;
     try { await post('/api/unpublish',{batch:S.batch}); toast('已撤回发布','ok'); await refresh(); }
@@ -506,6 +529,6 @@
     } catch(e){ toast(e.message,'bad'); }
   }
 
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,renderTreeLevels,updateTreeInfo,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,confirmDeletePerson,doDeletePerson,removeTemplate,createClass,openCreateClass,createClassFromModal,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,copyWechat,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,renderTreeLevels,updateTreeInfo,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,confirmDeletePerson,doDeletePerson,removeTemplate,createClass,openCreateClass,createClassFromModal,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();

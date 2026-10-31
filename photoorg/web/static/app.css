@@ -602,3 +602,26 @@ pre.tree {
 
 /* 顶部工具条里的「＋ 班级」与下拉底对齐 */
 .controls .btn { margin-bottom: 3px; }
+
+/* ---------------------------------------------------------------- 页脚 */
+.site-footer {
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, .66);
+}
+.site-footer .foot-inner {
+  max-width: 1280px; margin: 0 auto;
+  padding: 20px 24px 28px;
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; flex-wrap: wrap;
+  color: var(--muted); font-size: 12.5px;
+}
+.site-footer .foot-brand b { color: var(--ink); font-weight: 650; }
+.site-footer .foot-dot { opacity: .55; }
+.site-footer button.wechat {
+  font: inherit; font-size: 12.5px; line-height: 1.6;
+  color: var(--brand); background: var(--brand-soft);
+  border: 1px solid #d8e4ff; border-radius: 999px;
+  padding: 1px 9px; cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.site-footer button.wechat:hover { background: #e1ebff; border-color: #c6d8ff; }
