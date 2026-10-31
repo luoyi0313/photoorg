@@ -591,3 +591,11 @@ button.linkbtn:hover { text-decoration: underline; }
 /* 矩阵：满宽下的分隔线，让宽单元格更像表格 */
 table.tbl.matrix th + th, table.tbl.matrix td + td { border-left: 1px solid #eef2f8; }
 table.tbl.matrix tbody td { font-size: 14.5px; }
+
+/* 底库批量上传：目录结构示意 */
+pre.tree {
+  margin: 10px 0 14px; padding: 12px 14px;
+  background: #f7f9fd; border: 1px dashed var(--line-strong); border-radius: 10px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.75; color: #46506a;
+  overflow: auto; white-space: pre;
+}

@@ -141,7 +141,7 @@
 
   function inspect() { const d=S.data; $('#main').innerHTML=`<div class="card"><div class="row"><h2>结果审查</h2><span class="muted small">按人看照片；点击照片可查看每张脸并改判。</span><span class="right"><button class="btn sm" onclick="window.PO.showDiff()">自动 vs 人工</button></span></div>${d.persons.map(personRow).join('')}</div>`; }
 
-  async function gallery() { $('#main').innerHTML='<div class="empty"><div class="big">⏳</div>读取底库健康度…</div>'; const r=await api('/api/gallery/health?'+clsQ()); S.gallery=r; $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>底库管理</h2><span class="muted small">每个人建议 3～10 张；多样性比数量更重要。</span></div><button class="btn primary right" onclick="window.PO.openGalleryUpload()">+ 上传底库参考照片</button></div><div class="hint">选定一个人的多张清晰参考脸照片即可。系统会自动找出主脸、做质量门控和去重；不合格图片会在上传结果中说明原因。</div><table class="tbl" style="margin-top:12px"><thead><tr><th>人员</th><th class="num">模板</th><th class="num">平均质量</th><th>健康提示</th><th style="text-align:right;white-space:nowrap">操作</th></tr></thead><tbody>${r.persons.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="num">${p.n_templates}</td><td class="num">${p.quality.toFixed(2)}</td><td>${p.warnings?.length?`<span style="color:var(--warn)">⚠ ${esc(p.warnings.join('；'))}</span>`:'<span style="color:var(--ok)">✅ 健康</span>'}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="window.PO.openGallery(${p.person_id},'${esc(p.name)}')">查看模板</button> <button class="btn sm" onclick="window.PO.renamePerson(${p.person_id})">改名</button></td></tr>`).join('')}</tbody></table></div>`; }
+  async function gallery() { $('#main').innerHTML='<div class="empty"><div class="big">⏳</div>读取底库健康度…</div>'; const r=await api('/api/gallery/health?'+clsQ()); S.gallery=r; $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>底库管理</h2><span class="muted small">每个人建议 3～10 张；多样性比数量更重要。</span></div><span class="right"><button class="btn" onclick="window.PO.openGalleryTreeUpload()">一键上传（人名文件夹）</button><button class="btn primary" onclick="window.PO.openGalleryUpload()">+ 上传底库参考照片</button></span></div><div class="hint">一个人一个人传：选择名下的多张清晰参考照即可。整班一起传：选一个父文件夹，<b>子文件夹名=人名</b>，里面的照片就是那个人的底库照。系统会自动找主脸、做质量门控和去重。</div><table class="tbl" style="margin-top:12px"><thead><tr><th>人员</th><th class="num">模板</th><th class="num">平均质量</th><th>健康提示</th><th style="text-align:right;white-space:nowrap">操作</th></tr></thead><tbody>${r.persons.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="num">${p.n_templates}</td><td class="num">${p.quality.toFixed(2)}</td><td>${p.warnings?.length?`<span style="color:var(--warn)">⚠ ${esc(p.warnings.join('；'))}</span>`:'<span style="color:var(--ok)">✅ 健康</span>'}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm" onclick="window.PO.openGallery(${p.person_id},'${esc(p.name)}')">查看模板</button> <button class="btn sm" onclick="window.PO.renamePerson(${p.person_id})">改名</button></td></tr>`).join('')}</tbody></table></div>`; }
 
   async function clusters(threshold=0.55,minSize=2) { $('#main').innerHTML='<div class="empty"><div class="big">🧩</div>正在扫描本活动中的未知人脸…</div>'; try { const r=await api('/api/clusters?'+batchQ()+`&only_unknown=true&threshold=${threshold}&min_size=${minSize}`); $('#main').innerHTML=`<div class="card"><div class="row"><div><h2>冷启动聚类：给“陌生人”建底库</h2><p class="muted">适合第一次使用、还没有完整底库时：系统把本活动中反复出现但还不认识的脸放在一起。确认它们是同一个人后，给这一组输入姓名，系统就会创建人员并把这些脸加入底库。</p></div></div><div class="hint"><b>什么时候用？</b>活动照片里有人被标成“名单外 / 不认识”，但你希望下次能自动识别时使用。<br><b>什么时候不用？</b>如果已经有完整底库、也没有未知人脸，可以忽略此页。</div><div class="row" style="margin-top:12px"><label class="small">相似度要求<br><input id="clusterThreshold" type="number" min="0.30" max="0.95" step="0.05" value="${threshold}" style="width:100px"></label><label class="small">最少出现次数<br><input id="clusterMinSize" type="number" min="2" max="20" step="1" value="${minSize}" style="width:80px"></label><button class="btn primary" onclick="window.PO.runClusters()">扫描并开始聚类</button></div><p class="muted small">相似度越高，分组越严格；通常保持默认值即可。只扫描当前活动中尚未认识的人脸，不会改变已有识别结果。</p></div><div class="card" style="margin-top:14px"><div class="row"><h2>扫描结果</h2><span class="muted small">${r.clusters.length?'找到 '+r.clusters.length+' 组可命名人脸':'没有找到重复出现的未知人脸'}</span></div>${r.clusters.length?r.clusters.map(c=>`<div class="person"><div class="who"><div class="nm">同一人候选组 #${c.cid}</div><div class="muted small">在 ${c.size} 张脸中重复出现</div><button class="btn sm primary" onclick="window.PO.acceptCluster(${c.cid})">确认同一人并命名</button></div><div class="thumbs">${c.members.map(m=>`<div class="thumb"><img src="${m.crop}"><span class="tag">${esc(m.photo_name)}</span></div>`).join('')}</div></div>`).join(''):empty('🧩','当前没有可聚类的人脸','这通常表示：所有人已经识别完成，或未知人脸只各出现一次。你可以上传更多活动照片后再点“扫描并开始聚类”。')}</div>`; S.clusters=r.clusters; } catch(e) { $('#main').innerHTML=empty('🧩','暂时不能聚类',e.message); } }
   function runClusters(){const t=Number($('#clusterThreshold')?.value)||0.55, n=Number($('#clusterMinSize')?.value)||2;clusters(t,n);}
@@ -160,6 +160,69 @@
   function openActivityUpload() { const today=new Date().toISOString().slice(0,10); modal(`<div class="head"><h2>新建活动并上传照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><form id="activityUploadForm"><p class="muted">文件夹名称会自动变成 <b>日期-活动名</b>。例如：2026-10-31 秋游 → <code class="inline">20261031-秋游</code>。</p><div class="grid c3"><label>班级<br><input id="uploadClass" type="text" value="${esc(S.cls)}" required></label><label>活动日期<br><input id="activityDate" type="date" value="${today}" required></label><label>活动名称<br><input id="activityName" type="text" placeholder="例如：秋游" required></label></div><div style="margin-top:14px"><label><b>活动照片文件夹</b><br><input id="activityFiles" type="file" accept="image/*,.heic" multiple webkitdirectory directory required></label><div class="muted small">点击后请选择整个照片文件夹；也可以改为手动多选照片。照片只保存到本机的 <code class="inline">photos/</code>。</div></div><div id="activityUploadInfo" class="hint" style="margin-top:12px">尚未选择照片。</div><div class="row" style="margin-top:14px"><button class="btn primary" type="submit">上传并自动识别</button><button class="btn" type="button" onclick="window.PO.closeModal()">取消</button></div></form>`); const f=$('#activityFiles');f.onchange=()=>{const n=f.files.length;setText('#activityUploadInfo',n?`已选择 ${n} 个文件；上传后会自动检测、匹配、归档并生成报告。`:'尚未选择照片。');}; $('#activityUploadForm').onsubmit=submitActivityUpload; }
   async function submitActivityUpload(e) { e.preventDefault(); const files=$('#activityFiles').files; if(!files.length){toast('请选择活动照片文件夹或照片','bad');return;} const form=new FormData();form.append('class_name',$('#uploadClass').value.trim());form.append('activity',$('#activityName').value.trim());form.append('activity_date',$('#activityDate').value);for(const f of files)form.append('files',f,f.webkitRelativePath||f.name); const btn=e.target.querySelector('[type=submit]');btn.disabled=true;btn.textContent=`正在上传 ${files.length} 张并识别…`;setText('#activityUploadInfo','正在本机处理；照片数量多时请保持本页面打开。');try{const res=await fetch('/api/activity/upload',{method:'POST',body:form});const d=await res.json();if(!res.ok)throw new Error(d.detail||'上传失败');S.cls=d.class;S.batch=d.batch;closeModal();toast(`活动「${d.batch}」完成：${d.summary.present} 条出现，${d.summary.review} 条待复核`,'ok');const moved=d.run?.moved_out||[];if(moved.length)toast(`照片搬家：${moved.map(m=>`${m.n} 张原属「${m.batch}」，已移入本批次；该批次已退回待复核`).join('；')}`,'');await refresh();}catch(err){toast(err.message,'bad');if(btn?.isConnected){btn.disabled=false;btn.textContent='上传并自动识别';} } }
 
+  const parseTree = (files) => {
+    const map = new Map();
+    let rootFiles = 0;
+    for (const f of files) {
+      const parts = (f.webkitRelativePath || f.name).split('/').filter(Boolean);
+      if (parts.length < 3) { rootFiles += 1; continue; }
+      const person = parts[1];
+      if (!map.has(person)) map.set(person, []);
+      map.get(person).push(f);
+    }
+    return { map, rootFiles };
+  };
+  function openGalleryTreeUpload() {
+    modal(`<div class="head"><h2>一键上传底库文件夹</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
+      <p class="muted">选择整个父文件夹。系统把每个子文件夹的名字当作人名，把它里面的照片当作这个人的底库参考照，一次把所有人生成模板。</p>
+      <pre class="tree">底库/
+  张三/   1.jpg  2.jpg  3.jpg
+  李四/   1.jpg  2.jpg</pre>
+      <input id="treeFiles" type="file" accept="image/*,.heic" multiple webkitdirectory directory>
+      <div id="treeInfo" class="hint" style="margin-top:10px">尚未选择文件夹。</div>
+      <div class="hint" style="margin-top:8px">根目录下直接放的照片会被忽略；已存在的人员会追加模板，不会覆盖旧底库。</div>
+      <div class="row" style="margin-top:14px"><button class="btn primary" id="treeSubmit" onclick="window.PO.submitGalleryTree()">上传并注册</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
+    const f = $('#treeFiles');
+    if (f) f.onchange = () => {
+      const { map, rootFiles } = parseTree(f.files);
+      const total = [...map.values()].reduce((a, x) => a + x.length, 0);
+      setText('#treeInfo', map.size
+        ? `识别到 ${map.size} 个人名文件夹、${total} 张图片${rootFiles ? `；另有 ${rootFiles} 张在根目录将被忽略` : ''}。`
+        : '没有识别到子文件夹，请确认选择的是「包含人名子文件夹」的父文件夹。');
+    };
+  }
+  async function submitGalleryTree() {
+    const f = $('#treeFiles');
+    if (!f?.files?.length) { toast('请先选择包含人名子文件夹的文件夹', 'bad'); return; }
+    const { map } = parseTree(f.files);
+    if (!map.size) { toast('没有找到「人名/图片」结构', 'bad'); return; }
+    const form = new FormData();
+    form.append('class_name', S.cls);
+    for (const file of f.files) form.append('files', file, file.webkitRelativePath || file.name);
+    const btn = $('#treeSubmit');
+    if (btn) { btn.disabled = true; btn.textContent = '正在处理…'; }
+    setText('#treeInfo', `正在注册 ${map.size} 个人、${f.files.length} 张图片；首次识别较慢，请保持页面打开。`);
+    try {
+      const res = await fetch('/api/gallery/upload_tree', { method: 'POST', body: form });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || '上传失败');
+      closeModal();
+      toast(`已入库 ${d.n_added} 张模板，覆盖 ${d.n_persons} 人`,'ok');
+      if (d.n_rejected || d.skipped_files) setTimeout(() => showTreeResult(d), 0);
+      await refresh();
+      if (S.page === 'gallery') gallery();
+    } catch (e) {
+      toast(e.message, 'bad');
+      if (btn) { btn.disabled = false; btn.textContent = '上传并注册'; }
+    }
+  }
+  function showTreeResult(d) {
+    const rows = d.persons.map(p => `<tr><td><b>${esc(p.person)}</b></td><td class="num">${p.added}</td><td>${p.n_rejected ? `<span style="color:var(--warn)">${p.n_rejected} 张未入库${p.rejected?.length ? '：' + esc(p.rejected[0]) : ''}</span>` : '<span style="color:var(--ok)">全部入库</span>'}</td></tr>`).join('');
+    modal(`<div class="head"><h2>批量入库结果</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
+      <p class="muted">共 ${d.n_persons} 人、成功入库 ${d.n_added} 张${d.n_rejected ? `，${d.n_rejected} 张未通过质量检查` : ''}${d.skipped_files ? `，${d.skipped_files} 张因不在人名文件夹内被忽略` : ''}。</p>
+      <table class="tbl"><thead><tr><th>人员</th><th class="num">入库</th><th>备注</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="hint" style="margin-top:10px">未入库常见原因：脸太小、图片模糊、多人合照里主脸不明确，或同一个人重复照片。换更清晰的正脸照再传即可。</p>`);
+  }
   function openGalleryUpload() { modal(`<div class="head"><h2>上传底库参考照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><form id="galleryUploadForm"><p class="muted">给同一个人一次选多张清晰照片。建议 3～10 张，包含正脸、轻微侧脸、不同光线；不要上传多人合照。</p><div class="grid c3"><label>班级<br><input id="galleryUploadClass" type="text" value="${esc(S.cls)}" required></label><label>人员姓名<br><input id="galleryPersonName" type="text" placeholder="例如：张三" required></label><label><b>参考照片文件夹</b><br><input id="galleryFiles" type="file" accept="image/*,.heic" multiple webkitdirectory directory required></label></div><div class="muted small" style="margin-top:8px">点击后请选择该人员的整个照片文件夹；Chrome / Edge 支持。也可在弹出的选择器中手动多选图片。</div><div id="galleryUploadInfo" class="hint" style="margin-top:12px">每张图会选面积最大的脸入库；多人且大小接近的照片会被拒绝。</div><div class="row" style="margin-top:14px"><button class="btn primary" type="submit">上传并注册底库</button><button class="btn" type="button" onclick="window.PO.closeModal()">取消</button></div></form>`);const f=$('#galleryFiles');f.onchange=()=>setText('#galleryUploadInfo',f.files.length?`已选择 ${f.files.length} 张图片，准备注册模板。`:'请至少选择一个底库照片文件夹。');$('#galleryUploadForm').onsubmit=submitGalleryUpload; }
   async function submitGalleryUpload(e) {e.preventDefault();const files=$('#galleryFiles').files;if(!files.length){toast('请选择底库照片文件夹或图片','bad');return;}const form=new FormData();form.append('class_name',$('#galleryUploadClass').value.trim());form.append('person_name',$('#galleryPersonName').value.trim());for(const f of files)form.append('files',f,f.webkitRelativePath||f.name);const btn=e.target.querySelector('[type=submit]');btn.disabled=true;btn.textContent='正在注册底库…';try{const res=await fetch('/api/gallery/upload',{method:'POST',body:form});const d=await res.json();if(!res.ok)throw new Error(d.detail||'上传失败');S.cls=d.class;const rejected=d.result.rejected||[];closeModal();const msg=`${d.person}：${d.result.message||('成功入库 '+d.result.added+' 张')}`;toast(msg,d.result.added?'ok':'bad');await refresh();S.page='gallery';render();if(rejected.length){setTimeout(()=>modal(`<div class="head"><h2>底库照片未入库</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><p>${esc(d.person)} 的照片没有全部通过质量检查：</p><ul>${rejected.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><p class="hint">常见原因：脸太小、图片模糊、多人合照中主脸不明确，或同一个人的重复照片。请选择正脸更大、更清晰的单人照片后重新上传。</p>`),0);}}catch(err){toast(err.message,'bad');if(btn?.isConnected){btn.disabled=false;btn.textContent='上传并注册底库';}}}
 
@@ -339,6 +402,6 @@
     } catch(e){ toast(e.message,'bad'); }
   }
 
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,confirmAbsent,enrollAbsent,submitAbsent,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,confirmAbsent,enrollAbsent,submitAbsent,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();

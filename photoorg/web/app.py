@@ -38,6 +38,7 @@ from ..corrections import (
     undo as undo_impl,
 )
 from ..db import ClassDB, OverrideStore, PersonStore
+from ..engine import FaceEngine
 from ..imaging import crop_box, imread, iter_images, jpeg_bytes, resize_max, safe_photo_name
 from ..pipeline import UserError, batch_meta, load_settings, rematch, resolve_batch_dir, run_batch, save_settings
 from ..report import build_csv, build_markdown
@@ -475,6 +476,86 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             raise HTTPException(400, str(exc)) from exc
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    @api.post("/api/gallery/upload_tree")
+    async def gallery_upload_tree(
+        class_name: str = Form(...),
+        files: list[UploadFile] = File(...),
+    ):
+        """一键入库：父文件夹 → 子文件夹名即人名 → 子文件夹里的图片即该人底库照。
+
+        浏览器会把相对路径放在 filename 里（root/张三/1.jpg），这里按第二段分组，
+        只加载一次模型，避免一人一次重复初始化（每次约 8 秒）。
+        """
+        try:
+            c = safe_name(class_name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not files:
+            raise HTTPException(400, "请选择包含人名子文件夹的整个文件夹")
+
+        groups: dict[str, list[UploadFile]] = {}
+        skipped_files = 0
+        for upload in files:
+            parts = Path(upload.filename or "").parts
+            if len(parts) < 3:  # 直接放在父文件夹里的图片没有归属，跳过
+                skipped_files += 1
+                continue
+            try:
+                person = safe_name(parts[1])
+            except ValueError:
+                skipped_files += 1
+                continue
+            groups.setdefault(person, []).append(upload)
+        if not groups:
+            raise HTTPException(400, "没有找到「人名/图片」结构，请选择包含子文件夹的父文件夹")
+
+        tmp_root = app_paths.cache_dir / f"gallery-tree-{uuid4().hex}"
+        tmp_root.mkdir(parents=True, exist_ok=False)
+        settings = load_settings(app_paths, c)
+        engine = FaceEngine(settings)  # 整批只加载一次
+        results: list[dict] = []
+        try:
+            for person, uploads in groups.items():
+                pdir = tmp_root / person
+                pdir.mkdir(parents=True, exist_ok=True)
+                used: set[str] = set()
+                saved: list[Path] = []
+                for upload in uploads:
+                    item = await _save_upload(upload, pdir, used)
+                    if item:
+                        saved.append(item)
+                if not saved:
+                    results.append({"person": person, "added": 0, "rejected": [],
+                                    "n_rejected": 0, "skipped": len(uploads)})
+                    continue
+                try:
+                    r = enroll_files(app_paths, c, person, saved, engine=engine,
+                                     settings=settings, source="web_tree")
+                except UserError as exc:
+                    results.append({"person": person, "added": 0, "rejected": [str(exc)],
+                                    "n_rejected": 1, "skipped": 0})
+                    continue
+                rejected = list(r.get("rejected") or [])
+                results.append({
+                    "person": person,
+                    "added": int(r.get("added") or 0),
+                    "rejected": rejected[:3],
+                    "n_rejected": len(rejected),
+                    "skipped": len(uploads) - len(saved),
+                })
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+        results.sort(key=lambda x: x["person"])
+        return {
+            "class": c,
+            "persons": results,
+            "n_persons": len(results),
+            "n_added": sum(r["added"] for r in results),
+            "n_rejected": sum(r["n_rejected"] for r in results),
+            "skipped_files": skipped_files,
+        }
 
     @api.get("/api/batch")
     def batch_detail(batch: str | None = None, cls: str | None = Query(None, alias="class")):
