@@ -37,7 +37,7 @@ from ..corrections import (
     undo as undo_impl,
 )
 from ..db import ClassDB, OverrideStore, PersonStore
-from ..imaging import crop_box, imread, jpeg_bytes, resize_max, safe_photo_name
+from ..imaging import crop_box, imread, iter_images, jpeg_bytes, resize_max, safe_photo_name
 from ..pipeline import UserError, batch_meta, load_settings, rematch, resolve_batch_dir, run_batch, save_settings
 from ..report import build_csv, build_markdown
 from ..results import compute_batch, photo_faces_detail
@@ -122,6 +122,12 @@ class ClusterAcceptReq(BaseModel):
 
 class PersonReq(BaseModel):
     name: str
+    class_name: str = ""
+
+
+class RenameReq(BaseModel):
+    person_id: int
+    new_name: str
     class_name: str = ""
 
 
@@ -340,15 +346,33 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
     @api.post("/api/gallery/upload")
     async def gallery_upload(
         class_name: str = Form(...),
-        person_name: str = Form(...),
+        person_name: str = Form(""),
+        person_id: int | None = Form(None),
+        batch: str | None = Form(None),
+        rematch_after: bool = Form(False, alias="rematch"),
         files: list[UploadFile] = File(...),
     ):
-        """上传一个人的多张参考脸照片，注册为底库模板；原始临时上传会清理。"""
+        """上传一个人的多张参考脸照片，注册为底库模板；原始临时上传会清理。
+
+        - 已有人员可只传 ``person_id``，避免姓名拼写不一致又建出一个新的人。
+        - ``rematch=true`` + ``batch`` 用于「未出现名单 → 补照片」：入库后立即重跑该批次
+          的匹配与归档，补的照片能立刻把这个人从「未出现」里认回来。
+        """
         try:
             c = safe_name(class_name)
-            person = safe_name(person_name)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        store = PersonStore(app_paths.persons_db)
+        if person_id is not None:
+            row = store.person(int(person_id))
+            if not row:
+                raise HTTPException(404, "人员不存在")
+            person = row["name"]
+        else:
+            try:
+                person = safe_name(person_name)
+            except ValueError as exc:
+                raise HTTPException(400, "请填写人员姓名") from exc
         if not files:
             raise HTTPException(400, "请至少选择一张底库参考照片")
         tmp = app_paths.cache_dir / f"gallery-upload-{uuid4().hex}"
@@ -368,14 +392,30 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
                 f"成功入库 {result['added']} 张"
                 if result["added"] else "没有照片可入库，请按下方每张图片的拒绝原因更换图片"
             )
-            store = PersonStore(app_paths.persons_db)
             klass = store.klass(c)
             person_row = store.person_by_name(person)
-            return {
+            payload = {
                 "class": c, "person": person, "person_id": person_row["id"] if person_row else None,
                 "uploaded": len(saved), "result": result,
                 "template_count": len(store.templates(int(klass["id"]), int(person_row["id"]))) if klass and person_row else 0,
             }
+            if rematch_after and batch and person_row:
+                # 补完底库立刻重跑，页面刷新后「未出现」名单会是新的结论。
+                rematch_stats = rematch(app_paths, c, batch)
+                view = compute_batch(app_paths, c, batch)
+                rebuild_impl(app_paths, c, batch, view=view)
+                pr = next(
+                    (p for p in view.persons if p.person_id == int(person_row["id"])), None
+                )
+                payload.update(
+                    {
+                        "batch": batch,
+                        "rematch": rematch_stats,
+                        "present_after": pr.present_count if pr else 0,
+                        "absent_after": bool(pr.absent) if pr else True,
+                    }
+                )
+            return payload
         except HTTPException:
             raise
         except UserError as exc:
@@ -389,6 +429,15 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         b = _batch(c, batch)
         settings = load_settings(app_paths, c)
         view = compute_batch(app_paths, c, b, settings)
+        # 照片按内容唯一：同一张照片被传到别的批次后，本批次目录里还留着原文件，
+        # 但结论已经归到另一个批次。这里数一下，避免用户以为「界面丢了照片」。
+        batch_dir = app_paths.photos / b
+        known = {ph["rel"] for ph in view.photos}
+        orphans = 0
+        if batch_dir.exists():
+            for p in iter_images(batch_dir):
+                if str(p.relative_to(batch_dir)) not in known:
+                    orphans += 1
         persons = [
             {
                 "person_id": p.person_id,
@@ -431,6 +480,7 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             "absent_ready": view.absent_ready,
             "thresholds": {"t_high": view.settings.t_high, "t_low": view.settings.t_low,
                            "margin": view.settings.margin},
+            "orphan_files": orphans,
             "generated_at": now_human(),
         }
 
@@ -646,10 +696,13 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
     def person_add(req: PersonReq):
         c = _class(req.class_name or None)
         store = PersonStore(app_paths.persons_db)
-        klass = store.upsert_class(c)
+        class_id = store.upsert_class(c)  # 返回 class_id（int），不是 dict
         pid = store.upsert_person(req.name)
-        store.add_member(int(klass["id"]), pid)
-        rematch(app_paths, c, _batch(c, None))
+        store.add_member(int(class_id), pid)
+        try:
+            rematch(app_paths, c, _batch(c, None))
+        except HTTPException:
+            pass  # 还没有任何批次时，加人不该失败
         return {"person_id": pid, "name": req.name}
 
     @api.post("/api/person/remove")
@@ -661,6 +714,32 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         except HTTPException:
             pass
         return {"removed": person_id}
+
+    @api.post("/api/person/rename")
+    def person_rename(req: RenameReq):
+        """改人名：报告、归档目录、底库都按 person_id 关联，改完只需重建 out/。"""
+        c = _class(req.class_name or None)
+        store = PersonStore(app_paths.persons_db)
+        row = store.person(req.person_id)
+        if not row:
+            raise HTTPException(404, "人员不存在")
+        new = (req.new_name or "").strip()
+        if not new:
+            raise HTTPException(400, "新名字不能为空")
+        if new == row["name"]:
+            return {"person_id": req.person_id, "name": new, "rebuilt": 0, "unchanged": True}
+        other = store.person_by_name(new)
+        if other and int(other["id"]) != int(req.person_id):
+            raise HTTPException(400, f"已经有叫「{new}」的人，请换一个名字")
+        store.rename_person(req.person_id, new)
+        rebuilt = 0
+        for b in ClassDB(app_paths.class_paths(c).faces_db).batches():
+            try:
+                rebuild_impl(app_paths, c, b["batch"])
+                rebuilt += 1
+            except Exception:  # 归档重建失败不影响改名本身
+                pass
+        return {"person_id": req.person_id, "name": new, "rebuilt": rebuilt, "unchanged": False}
 
     # ---------------- 状态 / 发布
     @api.post("/api/absent/confirm")

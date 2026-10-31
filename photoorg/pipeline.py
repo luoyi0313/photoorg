@@ -23,7 +23,7 @@ from .matching import (
     decide_face,
     decisions_to_rows,
 )
-from .state import AUTO_DONE, StateStore
+from .state import AUTO_DONE, PUBLISHED, StateStore
 from .util import parse_batch_name
 
 
@@ -43,10 +43,14 @@ class RunStats:
     n_review: int = 0
     elapsed: float = 0.0
     errors: list = None
+    # 本次运行把哪些照片从旧批次「搬」了过来：照片按内容 hash 唯一，一个 hash 只能
+    # 属于一个批次，换个批次上传就等于从旧批次移走。旧批次的结论会因此失效。
+    moved_out: list = None
 
     def as_dict(self) -> dict:
         d = dict(self.__dict__)
         d["errors"] = self.errors or []
+        d["moved_out"] = self.moved_out or []
         return d
 
 
@@ -124,7 +128,8 @@ def run_batch(
 
     owned_engine = engine is None
     engine = engine or FaceEngine(settings)
-    stats = RunStats(batch=batch_name, n_total=len(files), errors=[])
+    stats = RunStats(batch=batch_name, n_total=len(files), errors=[], moved_out=[])
+    moved_out: dict[str, int] = {}
     t0 = time.perf_counter()
 
     for i, path in enumerate(files, 1):
@@ -139,6 +144,8 @@ def run_batch(
             continue
 
         prev = cdb.photo(phash)
+        if prev and prev["batch"] != batch_name:
+            moved_out[prev["batch"]] = moved_out.get(prev["batch"], 0) + 1
         st = path.stat()
         if (
             prev
@@ -209,6 +216,24 @@ def run_batch(
 
     sstore = StateStore(cp.batch_state)
     sstore.mark_auto_done(batch_name, note=f"run: {stats.n_new} 张新增，{stats.n_skipped} 张复用")
+
+    if moved_out:
+        # 照片搬走会让旧批次的「未出现/已出现」甚至已发布名单失效。这里显式把旧批次
+        # 退回待复核并重建它的 out/，否则旧批次会停在 PUBLISHED 却提示「去复核」。
+        from .archive import rebuild as _rebuild  # 延迟导入：archive 依赖 pipeline
+
+        for old_batch, n in sorted(moved_out.items()):
+            stats.moved_out.append({"batch": old_batch, "n": n})
+            sstore.note_edit(
+                old_batch,
+                by="system",
+                note=f"{n} 张照片已移入批次「{batch_name}」，原结论需重新确认",
+            )
+            try:
+                _rebuild(app, class_name, old_batch)
+            except Exception as exc:  # 旧批次归档重建失败不该让本次识别失败
+                stats.errors.append(f"批次「{old_batch}」归档重建失败：{exc}")
+
     if owned_engine:
         engine = None
     return stats
@@ -241,6 +266,15 @@ def rematch(
     if not person_ids:
         raise UserError(f"班级「{class_name}」名单为空")
 
+    def _finished(result: dict) -> dict:
+        # 重新匹配会改变「出现/未出现」结论；已发布的名单不能继续冒充有效。
+        sstore = StateStore(cp.batch_state)
+        if sstore.get(batch)["state"] == PUBLISHED:
+            sstore.note_edit(
+                batch, by="system", note="底库或名单变化后重新匹配，原发布结论失效"
+            )
+        return result
+
     if tpl_mat.shape[0] == 0:
         # 没有底库：全部人脸都不认识，但明细照写（否则界面是空的，人会以为坏了）
         for ph in photos:
@@ -249,7 +283,9 @@ def rematch(
                 d = decide_face(np.zeros((0,), dtype=np.float32), person_ids, settings)
                 ds.append((f["face_idx"], d))
             cdb.set_decisions(decisions_to_rows(ph["hash"], ds))
-        return {"n_present_pairs": 0, "n_review": 0, "n_photos": len(photos), "no_gallery": True}
+        return _finished(
+            {"n_present_pairs": 0, "n_review": 0, "n_photos": len(photos), "no_gallery": True}
+        )
 
     all_rows = []
     for ph in photos:
@@ -291,7 +327,7 @@ def rematch(
         n_present += sum(1 for r in pair_rows if r["status"] == "present")
         n_review += sum(1 for r in pair_rows if r["status"] == "review")
 
-    return {"n_present_pairs": n_present, "n_review": n_review, "n_photos": len(photos)}
+    return _finished({"n_present_pairs": n_present, "n_review": n_review, "n_photos": len(photos)})
 
 
 def _merge_pair_rows(rows: list[dict]) -> list[dict]:
