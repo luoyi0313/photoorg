@@ -1,0 +1,847 @@
+"""本地 HTTP 服务 + Web UI（127.0.0.1:8765）。
+
+三个页面（§8.3）：
+- /review  灰区复核页（系统问你，键盘驱动）
+- /inspect 结果审查页（你主动看：按人 / 按照片）
+- /gallery 底库管理页（长期维护）
+再加总览与设置（阈值校准、定稿门禁）。
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+from datetime import date, datetime
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .. import __version__
+from ..archive import adopt as adopt_impl
+from ..archive import diff_auto_vs_manual
+from ..archive import rebuild as rebuild_impl
+from ..calibrate import apply as apply_thresholds
+from ..calibrate import suggest as suggest_thresholds
+from ..cluster import accept_cluster, cluster_faces
+from ..config import AppPaths, IMAGE_EXTS, Settings, safe_name
+from ..corrections import (
+    audit_log,
+    clear_photo_person,
+    decide_face,
+    export_overrides_csv,
+    set_photo_person,
+    undo as undo_impl,
+)
+from ..db import ClassDB, OverrideStore, PersonStore
+from ..imaging import crop_box, imread, jpeg_bytes, resize_max, safe_photo_name
+from ..pipeline import UserError, batch_meta, load_settings, rematch, resolve_batch_dir, run_batch, save_settings
+from ..report import build_csv, build_markdown
+from ..results import compute_batch, photo_faces_detail
+from ..state import PUBLISHED, REVIEWED, RUNNING, StateStore
+from ..templates import (
+    add_template_from_face,
+    delete_person_with_gallery,
+    enroll_files,
+    health as gallery_health,
+)
+from ..util import now_human, now_iso, parse_batch_name
+
+STATIC = Path(__file__).parent / "static"
+
+
+# --------------------------------------------------------------- 请求模型
+
+
+class DecideReq(BaseModel):
+    batch: str
+    photo_hash: str
+    face_idx: int
+    action: str                    # present | new | unknown | skip
+    person_id: int | None = None
+    new_name: str | None = None
+    reason: str = ""
+    operator: str = ""
+
+
+class PairReq(BaseModel):
+    batch: str
+    photo_hash: str
+    person_id: int
+    action: str                    # present | absent
+    reason: str = ""
+    operator: str = ""
+
+
+class GalleryAddReq(BaseModel):
+    batch: str
+    photo_hash: str
+    face_idx: int
+    person_id: int
+    force: bool = False
+
+
+class ConfirmReq(BaseModel):
+    batch: str
+    person_id: int
+    confirmed: bool = True
+    by: str = ""
+
+
+class PublishReq(BaseModel):
+    batch: str
+    by: str = ""
+
+
+class RebuildReq(BaseModel):
+    batch: str
+    dry_run: bool = False
+
+
+class BatchReq(BaseModel):
+    batch: str
+
+
+class CalibrateApplyReq(BaseModel):
+    batch: str = ""
+    t_high: float
+    t_low: float
+    margin: float | None = None
+    by: str = "ui"
+
+
+class ClusterAcceptReq(BaseModel):
+    batch: str
+    name: str
+    members: list[dict]
+    operator: str = "ui"
+
+
+class PersonReq(BaseModel):
+    name: str
+    class_name: str = ""
+
+
+# --------------------------------------------------------------- app
+
+
+def create_app(root: Path | str = ".", default_class: str | None = None) -> FastAPI:
+    api = FastAPI(title="photoorg", version=__version__, docs_url="/api/docs")
+    app_paths = AppPaths(Path(root))
+
+    @api.middleware("http")
+    async def no_cache_api_responses(request: Request, call_next):
+        """本机 UI 的数据必须反映 SQLite 当前值，不能缓存旧的发布/识别状态。"""
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
+    # ---------------- 内部工具
+    def _class(name: str | None) -> str:
+        if name:
+            return safe_name(name)
+        if default_class:
+            return safe_name(default_class)
+        cfg = app_paths.global_config
+        if cfg.exists():
+            try:
+                d = json.loads(cfg.read_text("utf-8"))
+                if d.get("default_class"):
+                    return safe_name(d["default_class"])
+            except Exception:
+                pass
+        store = PersonStore(app_paths.persons_db)
+        cs = store.classes()
+        if cs:
+            return cs[0]["name"]
+        raise HTTPException(400, "还没有班级。先 photoorg init 或加人。")
+
+    def _batch(cls: str, batch: str | None) -> str:
+        cp = app_paths.class_paths(cls)
+        cdb = ClassDB(cp.faces_db)
+        rows = cdb.batches()
+        if not rows:
+            raise HTTPException(400, "这个班级还没有跑过批次")
+        if batch and any(r["batch"] == batch for r in rows):
+            return batch
+        if batch:
+            raise HTTPException(404, f"批次不存在：{batch}")
+        return rows[-1]["batch"]
+
+    def _stores(cls: str):
+        cp = app_paths.class_paths(cls)
+        return (
+            cp,
+            PersonStore(app_paths.persons_db),
+            ClassDB(cp.faces_db),
+            OverrideStore(cp.overrides_db),
+            StateStore(cp.batch_state),
+        )
+
+    def _photo_path(hash_: str) -> Path:
+        # 照片路径从库里查（批次无关，hash 全局唯一）
+        for cls_row in PersonStore(app_paths.persons_db).classes():
+            cdb = ClassDB(app_paths.class_paths(cls_row["name"]).faces_db)
+            ph = cdb.photo(hash_)
+            if ph and Path(ph["abs"]).exists():
+                return Path(ph["abs"])
+        raise HTTPException(404, "照片文件不在了")
+
+    def _activity_batch(activity: str, when: str | None) -> str:
+        """构造唯一批次名：YYYYMMDD-活动。日期为空则使用本地当天。"""
+        try:
+            day = date.fromisoformat((when or "").strip()) if when else date.today()
+        except ValueError as exc:
+            raise HTTPException(400, "活动日期格式不对，请选择日期") from exc
+        name = safe_name(activity)
+        base = f"{day:%Y%m%d}-{name}"
+        candidate = base
+        i = 2
+        while (app_paths.photos / candidate).exists():
+            candidate = f"{base}-{i}"
+            i += 1
+        return candidate
+
+    async def _save_upload(upload: UploadFile, directory: Path, used: set[str]) -> Path | None:
+        """安全地流式写上传图；浏览器的 webkitRelativePath 会以 filename 传来。"""
+        original = Path(upload.filename or "photo.jpg").name
+        ext = Path(original).suffix.lower()
+        if ext not in IMAGE_EXTS:
+            return None
+        stem = safe_photo_name(Path(original).stem)
+        filename = f"{stem}{ext}"
+        n = 2
+        while filename in used or (directory / filename).exists():
+            filename = f"{stem}-{n}{ext}"
+            n += 1
+        used.add(filename)
+        target = directory / filename
+        try:
+            with target.open("wb") as out:
+                while chunk := await upload.read(1024 * 1024):
+                    out.write(chunk)
+        finally:
+            await upload.close()
+        if target.stat().st_size == 0:
+            target.unlink(missing_ok=True)
+            return None
+        return target
+
+    # ---------------- 静态页面
+    # 开发期的本地浏览器很容易缓存 app.js，导致用户仍运行旧页面。
+    # 显式 no-cache，使每次刷新都向本机服务确认最新版本。
+    if STATIC.exists():
+        class NoCacheStaticFiles(StaticFiles):
+            def file_response(self, *args, **kwargs):
+                response = super().file_response(*args, **kwargs)
+                response.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+                response.headers["Pragma"] = "no-cache"
+                return response
+        api.mount("/static", NoCacheStaticFiles(directory=str(STATIC)), name="static")
+
+    @api.get("/")
+    def index():
+        f = STATIC / "index.html"
+        if not f.exists():
+            return Response("UI 缺失", status_code=500)
+        return FileResponse(str(f))
+
+    @api.get("/api/health")
+    def health():
+        return {"ok": True, "version": __version__}
+
+    @api.get("/api/bootstrap")
+    def bootstrap(cls: str | None = Query(None, alias="class")):
+        store = PersonStore(app_paths.persons_db)
+        classes = []
+        for c in store.classes():
+            classes.append(
+                {
+                    "name": c["name"],
+                    "n_persons": len(store.roster(int(c["id"]))),
+                    "n_templates": len(store.templates(int(c["id"]))),
+                }
+            )
+        cur = _class(cls) if classes else (cls or "")
+        batches = []
+        sstore = StateStore(app_paths.class_paths(cur).batch_state) if cur else None
+        cdb = ClassDB(app_paths.class_paths(cur).faces_db) if cur else None
+        if cdb:
+            for b in cdb.batches():
+                st = sstore.get(b["batch"])
+                meta = batch_meta(b["batch"])
+                batches.append({"batch": b["batch"], "date": meta["date"],
+                                "activity": meta["activity"], "state": st["state"],
+                                "label": st["label"], "n_photos": b["n_photos"],
+                                "last_run": b["last_run"]})
+        settings = load_settings(app_paths, cur) if cur else Settings()
+        return {
+            "root": str(app_paths.root),
+            "class": cur,
+            "classes": classes,
+            "batches": batches,
+            "thresholds": {"t_high": settings.t_high, "t_low": settings.t_low,
+                           "margin": settings.margin},
+            "model_dir": str(Path.home() / ".insightface" / "models" / "buffalo_l"),
+            "now": now_human(),
+        }
+
+    # ---------------- 网页上传：活动照片与底库参考照片
+    @api.post("/api/activity/upload")
+    async def activity_upload(
+        class_name: str = Form(...),
+        activity: str = Form(...),
+        activity_date: str | None = Form(None),
+        files: list[UploadFile] = File(...),
+    ):
+        """创建一个新活动批次、写入上传照片，并同步跑完识别/归档。"""
+        try:
+            c = safe_name(class_name)
+            batch = _activity_batch(activity, activity_date)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not files:
+            raise HTTPException(400, "请至少选择一张活动照片")
+        target = app_paths.photos / batch
+        target.mkdir(parents=True, exist_ok=False)
+        used: set[str] = set()
+        saved: list[Path] = []
+        try:
+            for upload in files:
+                item = await _save_upload(upload, target, used)
+                if item:
+                    saved.append(item)
+            if not saved:
+                shutil.rmtree(target, ignore_errors=True)
+                raise HTTPException(400, "没有收到可用图片；支持 JPG、PNG、WEBP、BMP、TIFF")
+            # 此处是同步任务；网页会处于“正在识别”状态，完成后直接返回结果，避免用户
+            # 刷新页面时不知道任务跑到了哪一步。
+            stats = run_batch(app_paths, c, batch)
+            view = compute_batch(app_paths, c, batch)
+            rebuilt = rebuild_impl(app_paths, c, batch, view=view)
+            return {
+                "class": c, "batch": batch, "saved": len(saved),
+                "run": stats.as_dict(), "rebuild": rebuilt,
+                "summary": _summary(app_paths, c, batch),
+            }
+        except HTTPException:
+            raise
+        except UserError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            # 图片已经存入活动文件夹，便于用户排查；返回明确的人话提示。
+            raise HTTPException(500, f"照片已保存，但自动识别未完成：{type(exc).__name__}: {exc}") from exc
+
+    @api.post("/api/gallery/upload")
+    async def gallery_upload(
+        class_name: str = Form(...),
+        person_name: str = Form(...),
+        files: list[UploadFile] = File(...),
+    ):
+        """上传一个人的多张参考脸照片，注册为底库模板；原始临时上传会清理。"""
+        try:
+            c = safe_name(class_name)
+            person = safe_name(person_name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not files:
+            raise HTTPException(400, "请至少选择一张底库参考照片")
+        tmp = app_paths.cache_dir / f"gallery-upload-{uuid4().hex}"
+        tmp.mkdir(parents=True, exist_ok=False)
+        used: set[str] = set()
+        saved: list[Path] = []
+        try:
+            for upload in files:
+                item = await _save_upload(upload, tmp, used)
+                if item:
+                    saved.append(item)
+            if not saved:
+                raise HTTPException(400, "没有收到可用图片；支持 JPG、PNG、WEBP、BMP、TIFF")
+            result = enroll_files(app_paths, c, person, saved, source="web_upload")
+            # 空结果不是 HTTP 失败：页面需要拿到每张具体被拒原因，供用户直接换图。
+            result["message"] = (
+                f"成功入库 {result['added']} 张"
+                if result["added"] else "没有照片可入库，请按下方每张图片的拒绝原因更换图片"
+            )
+            store = PersonStore(app_paths.persons_db)
+            klass = store.klass(c)
+            person_row = store.person_by_name(person)
+            return {
+                "class": c, "person": person, "person_id": person_row["id"] if person_row else None,
+                "uploaded": len(saved), "result": result,
+                "template_count": len(store.templates(int(klass["id"]), int(person_row["id"]))) if klass and person_row else 0,
+            }
+        except HTTPException:
+            raise
+        except UserError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @api.get("/api/batch")
+    def batch_detail(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        settings = load_settings(app_paths, c)
+        view = compute_batch(app_paths, c, b, settings)
+        persons = [
+            {
+                "person_id": p.person_id,
+                "name": p.name,
+                "count": p.present_count,
+                "auto": p.auto_count,
+                "manual": p.manual_count,
+                "review": len(p.review_photos),
+                "absent": p.absent,
+                "absent_confirmed": p.absent_confirmed,
+                "n_templates": p.n_templates,
+                "flagged": p.flagged,
+                "evidence": p.evidence,
+                "photos": [
+                    {"photo_hash": x.photo_hash, "photo_name": x.photo_name,
+                     "status": x.status, "source": x.source, "score": round(x.score, 3),
+                     "manual": x.manual, "reason": x.reason, "override_id": x.override_id}
+                    for x in p.photos
+                ],
+                "review_photos": [
+                    {"photo_hash": x.photo_hash, "photo_name": x.photo_name,
+                     "score": round(x.score, 3)}
+                    for x in p.review_photos
+                ],
+            }
+            for p in view.persons
+        ]
+        return {
+            "batch": b,
+            "class": c,
+            "meta": batch_meta(b),
+            "state": view.state,
+            "stats": view.stats,
+            "persons": persons,
+            "review_count": len(view.review_items),
+            "unknown": view.unknown_faces[:60],
+            "draft_banner": view.draft_banner,
+            "can_publish": view.can_publish,
+            "review_ready": view.review_ready,
+            "absent_ready": view.absent_ready,
+            "thresholds": {"t_high": view.settings.t_high, "t_low": view.settings.t_low,
+                           "margin": view.settings.margin},
+            "generated_at": now_human(),
+        }
+
+    # ---------------- 图像
+    @api.get("/api/image/{hash_}")
+    def image(hash_: str, max: int = 1400):
+        p = _photo_path(hash_)
+        img = resize_max(imread(p), max_side=max)
+        return Response(jpeg_bytes(img, 88), media_type="image/jpeg")
+
+    @api.get("/api/crop/{hash_}/{idx}")
+    def crop(hash_: str, idx: int, size: int = 200, pad: float = 0.28):
+        cls = None
+        img = None
+        for cls_row in PersonStore(app_paths.persons_db).classes():
+            cdb = ClassDB(app_paths.class_paths(cls_row["name"]).faces_db)
+            ph = cdb.photo(hash_)
+            if not ph:
+                continue
+            faces = {f["face_idx"]: f for f in cdb.faces(hash_)}
+            f = faces.get(int(idx))
+            if not f:
+                raise HTTPException(404, "这张脸不在了")
+            img = imread(Path(ph["abs"]))
+            patch = crop_box(img, f["bbox"], pad=pad)
+            h, w = patch.shape[:2]
+            if max(h, w) > size:
+                import cv2
+                s = size / max(h, w)
+                patch = cv2.resize(patch, (max(1, int(w * s)), max(1, int(h * s))),
+                                   interpolation=cv2.INTER_AREA)
+            return Response(jpeg_bytes(patch, 90), media_type="image/jpeg")
+        raise HTTPException(404, "照片不在了")
+
+    # ---------------- 灰区复核
+    @api.get("/api/review")
+    def review_list(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        view = compute_batch(app_paths, c, b)
+        items = list(view.review_items)
+        sstore = StateStore(app_paths.class_paths(c).batch_state)
+        return {
+            "batch": b,
+            "class": c,
+            "items": items,
+            "remaining": len(items),
+            "state": sstore.get(b),
+            "fallback_persons": [{"person_id": p.person_id, "name": p.name} for p in view.persons],
+            "thresholds": {"t_high": view.settings.t_high, "t_low": view.settings.t_low},
+            "templates": _template_counts(app_paths, c),
+        }
+
+    @api.post("/api/review/decide")
+    def review_decide(req: DecideReq):
+        # 班级从批次反查，避免前端每个请求都要传 class
+        c = _class_for_batch(app_paths, req.batch)
+        if not c:
+            raise HTTPException(404, "这个批次不属于任何班级")
+        try:
+            r = decide_face(
+                app_paths, c, req.batch, req.photo_hash, req.face_idx, req.action,
+                person_id=req.person_id, new_name=req.new_name,
+                operator=req.operator or "ui", reason=req.reason, source="ui",
+            )
+        except UserError as e:
+            raise HTTPException(400, str(e))
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"result": r, "rebuild": rr, "remaining": _remaining(app_paths, c, req.batch)}
+
+    # ---------------- 照片×人
+    @api.post("/api/pair")
+    def pair_set(req: PairReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        try:
+            r = set_photo_person(app_paths, c, req.batch, req.photo_hash, req.person_id,
+                                 req.action, source="ui", operator=req.operator or "ui",
+                                 reason=req.reason)
+        except UserError as e:
+            raise HTTPException(400, str(e))
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"result": r, "rebuild": rr, "summary": _summary(app_paths, c, req.batch)}
+
+    @api.post("/api/pair/clear")
+    def pair_clear(req: PairReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        r = clear_photo_person(app_paths, c, req.batch, req.photo_hash, req.person_id)
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"result": r, "rebuild": rr, "summary": _summary(app_paths, c, req.batch)}
+
+    @api.post("/api/undo")
+    def undo(req: BatchReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        r = undo_impl(app_paths, c, batch=req.batch)
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"result": r, "rebuild": rr, "summary": _summary(app_paths, c, req.batch)}
+
+    @api.get("/api/photo/{hash_}")
+    def photo_detail(hash_: str, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        cp = app_paths.class_paths(c)
+        cdb = ClassDB(cp.faces_db)
+        ph = cdb.photo(hash_)
+        if not ph:
+            raise HTTPException(404, "照片记录不存在")
+        view = compute_batch(app_paths, c, ph["batch"])
+        present = [
+            {"person_id": p.person_id, "name": p.name}
+            for p in view.persons
+            for x in p.photos
+            if x.photo_hash == hash_
+        ]
+        return {
+            "hash": hash_,
+            "name": ph["name"],
+            "width": ph["width"],
+            "height": ph["height"],
+            "faces": photo_faces_detail(app_paths, c, hash_),
+            "present": present,
+        }
+
+    @api.get("/api/audit")
+    def audit(batch: str | None = None, cls: str | None = Query(None, alias="class"), limit: int = 200):
+        c = _class(cls)
+        return {"items": audit_log(app_paths, c, batch=batch, limit=limit)}
+
+    # ---------------- 底库
+    @api.get("/api/gallery")
+    def gallery(person_id: int, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        store = PersonStore(app_paths.persons_db)
+        cp = app_paths.class_paths(c)
+        klass = store.klass(c)
+        if not klass:
+            raise HTTPException(404, "班级不存在")
+        rows = store.templates(int(klass["id"]), person_id, active_only=False)
+        out = []
+        for r in rows:
+            p = cp.dir / r["path"] if r["path"] else None
+            out.append({
+                "id": r["id"],
+                "active": bool(r["active"]),
+                "quality": round(float(r["quality"]), 3),
+                "yaw": round(float(r["yaw"]), 1),
+                "source": r["source"],
+                "created_at": r["created_at"],
+                "photo_hash": r["photo_hash"],
+                "face_idx": r["face_idx"],
+                "url": f"/api/gallery/img/{r['id']}",
+            })
+        return {"person_id": person_id, "templates": out,
+                "health": [h for h in gallery_health(app_paths, c) if h["person_id"] == person_id]}
+
+    @api.get("/api/gallery/img/{tid}")
+    def gallery_img(tid: int, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        store = PersonStore(app_paths.persons_db)
+        row = store.template(tid)
+        if not row:
+            raise HTTPException(404, "模板不存在")
+        cp = app_paths.class_paths(c)
+        p = cp.dir / row["path"]
+        if not p.exists():
+            raise HTTPException(404, "模板文件不见了")
+        return Response(p.read_bytes(), media_type="image/jpeg")
+
+    @api.post("/api/gallery/add")
+    def gallery_add(req: GalleryAddReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        try:
+            r = add_template_from_face(app_paths, c, req.person_id, req.photo_hash,
+                                       req.face_idx, source="manual", force=req.force)
+        except UserError as e:
+            raise HTTPException(400, str(e))
+        return {"result": r}
+
+    @api.post("/api/gallery/remove")
+    def gallery_remove(template_id: int, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        store = PersonStore(app_paths.persons_db)
+        row = store.template(template_id)
+        if not row:
+            raise HTTPException(404, "模板不存在")
+        store.delete_template(template_id)
+        cp = app_paths.class_paths(c)
+        if row["path"]:
+            p = cp.dir / row["path"]
+            if p.exists():
+                p.unlink()
+        return {"removed": template_id}
+
+    @api.get("/api/gallery/health")
+    def gallery_health_api(cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        rows = gallery_health(app_paths, c)
+        view = None
+        try:
+            b = _batch(c, None)
+            view = compute_batch(app_paths, c, b)
+        except HTTPException:
+            pass
+        if view:
+            stat = {p.person_id: p for p in view.persons}
+            for r in rows:
+                p = stat.get(r["person_id"])
+                if p:
+                    r["count"] = p.present_count
+                    r["review"] = len(p.review_photos)
+        return {"class": c, "persons": rows}
+
+    # ---------------- 名单
+    @api.post("/api/person/add")
+    def person_add(req: PersonReq):
+        c = _class(req.class_name or None)
+        store = PersonStore(app_paths.persons_db)
+        klass = store.upsert_class(c)
+        pid = store.upsert_person(req.name)
+        store.add_member(int(klass["id"]), pid)
+        rematch(app_paths, c, _batch(c, None))
+        return {"person_id": pid, "name": req.name}
+
+    @api.post("/api/person/remove")
+    def person_remove(person_id: int, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        delete_person_with_gallery(app_paths, c, person_id)
+        try:
+            rematch(app_paths, c, _batch(c, None))
+        except HTTPException:
+            pass
+        return {"removed": person_id}
+
+    # ---------------- 状态 / 发布
+    @api.post("/api/absent/confirm")
+    def absent_confirm(req: ConfirmReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        sstore = StateStore(app_paths.class_paths(c).batch_state)
+        if req.confirmed:
+            sstore.confirm_absent(req.batch, req.person_id, by=req.by or "ui")
+        else:
+            sstore.unconfirm_absent(req.batch, req.person_id)
+        view = compute_batch(app_paths, c, req.batch)
+        return {"state": sstore.get(req.batch), "can_publish": view.can_publish,
+                "absent_ready": view.absent_ready, "review_ready": view.review_ready}
+
+    @api.post("/api/publish")
+    def publish(req: PublishReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        if not req.by.strip():
+            raise HTTPException(400, "发布需要填确认人（报告页眉会印出来）")
+        view = compute_batch(app_paths, c, req.batch)
+        if view.review_items:
+            raise HTTPException(400, f"还有 {len(view.review_items)} 条灰区未确认，禁止发布正式名单")
+        unconf = [p.name for p in view.persons if p.absent and not p.absent_confirmed]
+        if unconf:
+            raise HTTPException(400, f"还有 {len(unconf)} 人「未出现」没逐人确认：{'、'.join(unconf[:6])}")
+        sstore = StateStore(app_paths.class_paths(c).batch_state)
+        sstore.set_state(req.batch, REVIEWED, by=req.by, note="UI 确认")
+        sstore.set_state(req.batch, PUBLISHED, by=req.by, note="UI 发布")
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"state": sstore.get(req.batch), "rebuild": rr}
+
+    @api.post("/api/unpublish")
+    def unpublish(req: BatchReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        sstore = StateStore(app_paths.class_paths(c).batch_state)
+        sstore.set_state(req.batch, REVIEWED, by="ui", note="撤回发布")
+        rebuild_impl(app_paths, c, req.batch)
+        return {"state": sstore.get(req.batch)}
+
+    # ---------------- 归档 / 校准 / 冷启动
+    @api.post("/api/rebuild")
+    def rebuild(req: RebuildReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        return rebuild_impl(app_paths, c, req.batch, dry_run=req.dry_run)
+
+    @api.post("/api/adopt")
+    def adopt(req: BatchReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        r = adopt_impl(app_paths, c, req.batch, operator="ui")
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"result": r, "rebuild": rr}
+
+    @api.get("/api/diff")
+    def diff(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        view = compute_batch(app_paths, c, b)
+        return {"batch": b, "diff": diff_auto_vs_manual(view),
+                "summary": _summary(app_paths, c, b)}
+
+    @api.post("/api/calibrate")
+    def calibrate(req: BatchReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        try:
+            return suggest_thresholds(app_paths, c)
+        except UserError as e:
+            raise HTTPException(400, str(e))
+
+    @api.post("/api/calibrate/apply")
+    def calibrate_apply(req: CalibrateApplyReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        try:
+            r = apply_thresholds(app_paths, c, req.t_high, req.t_low, req.margin, by=req.by)
+        except UserError as e:
+            raise HTTPException(400, str(e))
+        return r
+
+    @api.get("/api/clusters")
+    def clusters(batch: str | None = None, threshold: float = 0.55, min_size: int = 2,
+                 only_unknown: bool = False, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        try:
+            cs = cluster_faces(app_paths, c, b, threshold=threshold, min_size=min_size,
+                               only_unknown=only_unknown)
+        except UserError as e:
+            raise HTTPException(400, str(e))
+        return {
+            "batch": b,
+            "clusters": [
+                {
+                    "cid": x.cid,
+                    "size": x.size,
+                    "members": [
+                        {**m, "crop": f"/api/crop/{m['photo_hash']}/{m['face_idx']}"}
+                        for m in x.members[:24]
+                    ],
+                }
+                for x in cs
+            ],
+        }
+
+    @api.post("/api/clusters/accept")
+    def clusters_accept(req: ClusterAcceptReq):
+        c = _class_for_batch(app_paths, req.batch) or _class(None)
+        try:
+            r = accept_cluster(app_paths, c, req.batch, req.name, req.members,
+                               operator=req.operator or "ui")
+        except UserError as e:
+            raise HTTPException(400, str(e))
+        rematch(app_paths, c, req.batch)
+        rr = rebuild_impl(app_paths, c, req.batch)
+        return {"result": r, "rebuild": rr}
+
+    # ---------------- 导出
+    @api.get("/api/export/report.md")
+    def export_md(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        view = compute_batch(app_paths, c, b)
+        return Response(build_markdown(view), media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="report-{b}.md"'})
+
+    @api.get("/api/export/report.csv")
+    def export_csv(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        view = compute_batch(app_paths, c, b)
+        return Response(build_csv(view), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="report-{b}.csv"'})
+
+    @api.get("/api/export/overrides.csv")
+    def export_overrides(batch: str | None = None, cls: str | None = Query(None, alias="class")):
+        c = _class(cls)
+        b = _batch(c, batch)
+        return Response(export_overrides_csv(app_paths, c, b), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="overrides-{b}.csv"'})
+
+    @api.exception_handler(UserError)
+    def user_error_handler(request: Request, exc: UserError):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    return api
+
+
+# --------------------------------------------------------------- 小工具
+
+
+def _class_for_batch(app: AppPaths, batch: str) -> str | None:
+    if not app.classes_dir.exists():
+        return None
+    for d in sorted(app.classes_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        cdb = ClassDB(d / "faces.db")
+        if cdb.photos(batch=batch)[:1]:
+            return d.name
+    return None
+
+
+def _remaining(app: AppPaths, cls: str, batch: str) -> int:
+    return len(compute_batch(app, cls, batch).review_items)
+
+
+def _summary(app: AppPaths, cls: str, batch: str) -> dict:
+    view = compute_batch(app, cls, batch)
+    return {
+        "present": view.n_present_pairs,
+        "review": len(view.review_items),
+        "absent": len(view.absent_persons),
+        "manual": view.stats.get("n_manual", 0),
+        "can_publish": view.can_publish,
+        "state": view.state,
+        "draft_banner": view.draft_banner,
+    }
+
+
+def _template_counts(app: AppPaths, cls: str) -> dict:
+    store = PersonStore(app.persons_db)
+    klass = store.klass(cls)
+    if not klass:
+        return {}
+    return {str(r["id"]): len(store.templates(int(klass["id"]), int(r["id"])))
+            for r in store.roster(int(klass["id"]))}
