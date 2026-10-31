@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#2f6feb">
   <title>照片归档 · 出勤统计</title>
-  <link rel="stylesheet" href="/static/app.css?v=20261031-ui6">
+  <link rel="stylesheet" href="/static/app.css?v=20261031-ui8">
 </head>
 <body>
 <header class="top">
@@ -22,19 +22,21 @@
       <a class="btn sm" id="outReport" target="_blank" title="下载全班出勤统计表（活动×人员，CSV）">下载报告</a>
     </div>
   </div>
-  <nav class="tabs" id="tabs">
-    <button data-page="overview" class="on">总览</button>
-    <button data-page="review">灰区复核 <span id="reviewBadge" class="badge zero">0</span></button>
-    <button data-page="inspect">结果审查</button>
-    <button data-page="gallery">底库管理</button>
-    <button data-page="stats">年度统计</button>
-    <button data-page="photos">活动照片</button>
-    <button data-page="clusters">冷启动聚类</button>
-    <button data-page="settings">设置与审计</button>
-  </nav>
+  <div class="tabs-shell">
+    <nav class="tabs" id="tabs">
+      <button data-page="overview" class="on">总览</button>
+      <button data-page="review">灰区复核 <span id="reviewBadge" class="badge zero">0</span></button>
+      <button data-page="inspect">结果审查</button>
+      <button data-page="gallery">底库管理</button>
+      <button data-page="stats">年度统计</button>
+      <button data-page="photos">活动照片</button>
+      <button data-page="clusters">冷启动聚类</button>
+      <button data-page="settings">设置与审计</button>
+    </nav>
+  </div>
 </header>
 <main id="main"><div class="empty"><div class="big">⏳</div>正在读取本地数据…</div></main>
 <div id="modalRoot"></div><div id="toasts"></div>
-<script src="/static/app.js?v=20261031-ui6"></script>
+<script src="/static/app.js?v=20261031-ui8"></script>
 </body>
 </html>

@@ -21,6 +21,13 @@
   const clsQ = () => `class=${encodeURIComponent(S.cls)}`;
   const batchQ = () => `batch=${encodeURIComponent(S.batch)}&${clsQ()}`;
   const operator = () => localStorage.getItem('photoorg.operator') || '本机用户';
+  const AV_COLORS = ['#3a7bff', '#16824c', '#7c5cff', '#c8860a', '#0f9b8e', '#c25a9c', '#4a6fb5', '#a06a2c'];
+  const avatar = (name) => {
+    const text = String(name || '?');
+    const seed = Array.from(text).reduce((a, c) => a + c.codePointAt(0), 0);
+    const color = AV_COLORS[seed % AV_COLORS.length];
+    return `<span class="avatar" style="background:${color}">${esc(text.slice(0, 1))}</span>`;
+  };
   async function refresh(keepPage=true) {
     S.boot = await api('/api/bootstrap?'+clsQ());
     const classNames=(S.boot.classes||[]).map(x=>x.name);
@@ -30,7 +37,7 @@
     // 当前批次不存在（例如切换班级、刚创建活动）时，自动选择最新批次。
     if (!S.batch || !batches.some(x=>x.batch===S.batch)) S.batch=batches.length ? batches[batches.length-1].batch : '';
     S.data = S.batch ? await api('/api/batch?'+batchQ()) : null;
-    renderHeader(); if (keepPage) render();
+    if (keepPage) render(); renderHeader();
   }
   function renderHeader() {
     // 发布后 refresh 会替换部分页面；头部节点用安全更新，不能因为一个节点短暂缺失
@@ -47,7 +54,22 @@
     if(report) { report.href=S.cls?`/api/export/matrix.csv?${clsQ()}&_ts=${Date.now()}`:'#'; report.title='下载全班出勤统计表（活动×人员，CSV）'; }
   }
   // Tab 由下方 #tabs 的稳定事件监听器处理；渲染时只替换按钮内容，不依赖行内 onclick。
-  function tab(name) { return `<button type="button" data-page="${name}" class="${S.page===name?'on':''}">${({overview:'总览',review:'灰区复核',inspect:'结果审查',gallery:'底库管理',stats:'年度统计',photos:'活动照片',clusters:'冷启动聚类',settings:'设置与审计'})[name]}</button>`; }
+  const TAB_LABEL={overview:'总览',review:'灰区复核',inspect:'结果审查',gallery:'底库管理',stats:'年度统计',photos:'活动照片',clusters:'冷启动聚类',settings:'设置与审计'};
+  const TAB_ICON={
+    overview:'<path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.6V21h13V9.6"/>',
+    review:'<circle cx="12" cy="12" r="8.6"/><path d="M9.7 9.2a2.4 2.4 0 1 1 3.5 2.1c-.8.5-1.2 1-1.2 1.9v.3"/><circle cx="12" cy="17.1" r=".7" fill="currentColor" stroke="none"/>',
+    inspect:'<path d="M2.4 12S6 5.4 12 5.4 21.6 12 21.6 12 18 18.6 12 18.6 2.4 12 2.4 12Z"/><circle cx="12" cy="12" r="3"/>',
+    gallery:'<circle cx="9" cy="8.2" r="3.4"/><path d="M2.8 20c0-3.3 2.8-5.9 6.2-5.9s6.2 2.6 6.2 5.9"/><path d="M16.2 5.6a3.2 3.2 0 0 1 0 6.3"/><path d="M17.8 14.6c2 .8 3.4 2.6 3.4 5.4"/>',
+    stats:'<path d="M4 20V11"/><path d="M10 20V4.5"/><path d="M16 20v-6"/><path d="M22 20H2"/>',
+    photos:'<rect x="3" y="4.5" width="18" height="15" rx="2.2"/><circle cx="8.4" cy="9.4" r="1.5"/><path d="m20.5 16.2-4.8-4.8-6.2 6.2"/>',
+    clusters:'<rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/>',
+    settings:'<circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v2.9M12 18.5v2.9M2.6 12h2.9M18.5 12h2.9M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M7.4 16.6l-2 2"/>',
+  };
+  const tabIcon=(name)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TAB_ICON[name]||''}</svg>`;
+  function tab(name) {
+    const badge = name==='review' ? '<span class="badge zero" id="reviewBadge">0</span>' : '';
+    return `<button type="button" data-page="${name}" class="${S.page===name?'on':''}">${tabIcon(name)}<span>${TAB_LABEL[name]}</span>${badge}</button>`;
+  }
   function empty(icon,title,detail='') { return `<div class="empty"><div class="big">${icon}</div><h2>${esc(title)}</h2><div>${detail}</div></div>`; }
   function noBatchPage(page) {
     const help={
@@ -75,11 +97,11 @@
     const d=S.data, st=d.stats, persons=d.persons;
     const absent=persons.filter(p=>p.absent), unconf=absent.filter(p=>!p.absent_confirmed);
     const firstGuide = d.state.label === 'DRAFT' ? `<section class="card"><div class="row"><h2>第一次怎么操作？</h2><button class="btn sm right" onclick="localStorage.setItem('photoorg.guide.dismiss','1');window.PO.go('overview')">我知道了</button></div><ol style="margin:6px 0 0;padding-left:22px"><li>先看上面的「待复核」：有数字时点击 <b>灰区复核</b>，给每张拿不准的脸选人、标不认识或新建人员。</li><li>点击 <b>结果审查</b>，按人查看缩略图；点照片看大图，发现错归即可改判或移出。</li><li>名单中有「未出现」时，先看反证照片，再逐人点“确认未出现”。</li><li>两个待办均清零后，点击 <b>发布正式名单</b>；报告和归档目录会一同更新。</li></ol><p class="hint">这次演示已没有灰区：可直接点击「结果审查」查看识别后的照片；真实照片跑完后按上面 4 步操作。</p></section>` : '';
-    $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>上传并自动识别</h2><div class="muted small">选择一个活动照片文件夹后，系统会以“日期-活动名”建批次、自动识别并生成出勤报告。</div></div><span class="right"><button class="btn primary" onclick="window.PO.openActivityUpload()">+ 新建活动并上传照片</button></span></div></section>${localStorage.getItem('photoorg.guide.dismiss') ? '' : firstGuide}${d.draft_banner?`<div class="banner ${d.state.label==='DRAFT'?'':'soft'}">⚠️ ${esc(d.draft_banner)}</div>`:''}
+    $('#main').innerHTML=`<section class="hero"><div class="hero-grid"><div class="hero-inner"><div class="eyebrow">本机处理 · 照片不出电脑</div><h1>上传照片，自动点名</h1><p>选中一个活动照片文件夹，系统会建批次、识别每个人、按人归档并生成出勤报告。拿不准的脸由你逐张确认，人工修正全程可追溯。</p><div class="row"><button class="btn primary" onclick="window.PO.openActivityUpload()">+ 新建活动并上传照片</button><button class="btn ghost" onclick="window.PO.go('gallery')">先管理底库</button></div></div><div class="hero-steps" aria-hidden="true"><div class="step"><b>1</b><span>上传活动照片</span></div><div class="step"><b>2</b><span>自动识别人脸</span></div><div class="step"><b>3</b><span>逐张复核灰区</span></div><div class="step"><b>4</b><span>发布出勤名单</span></div></div></div></section>${localStorage.getItem('photoorg.guide.dismiss') ? '' : firstGuide}${d.draft_banner?`<div class="banner ${d.state.label==='DRAFT'?'':'soft'}">⚠️ ${esc(d.draft_banner)}</div>`:''}
       ${st.incomplete?`<div class="banner">⚠️ 批次质量不达标：${esc(st.incomplete_reason)}。系统不会给出「未出现」结论。</div>`:''}
       ${d.orphan_files?`<div class="banner info">本批次文件夹里另有 ${d.orphan_files} 张照片已被归入其他批次（原始文件保留、未删除），所以这里只统计属于本批次的 ${st.n_photos} 张。</div>`:''}
       <div class="grid c4">
-       ${stat('照片',st.n_photos,`失败 ${st.n_error||0} 张`)}${stat('检出人脸',st.n_faces,`质量达标 ${st.n_usable_faces||0} 张`)}${stat('出现',st.n_pairs_present,'按「照片×人」计数')}${stat('待复核',d.review_count, d.review_count?'请在灰区复核页确认':'本次数据很干净')}
+       ${stat('照片',st.n_photos,`失败 ${st.n_error||0} 张`,'blue')}${stat('检出人脸',st.n_faces,`质量达标 ${st.n_usable_faces||0} 张`,'violet')}${stat('出现',st.n_pairs_present,'按「照片×人」计数','green')}${stat('待复核',d.review_count, d.review_count?'请在灰区复核页确认':'本次数据很干净', d.review_count?'amber':'slate')}
       </div>
       <div class="split"><section class="card"><h2>处理进度</h2>${progressActions(d)}</section>
       <section class="card"><h2>未出现名单</h2>${absent.length?absent.map(p=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b><span class="muted small">${p.absent_confirmed?'已确认':'待确认'}</span><span class="right"><button class="btn sm" onclick="window.PO.enrollAbsent(${p.person_id})">上传照片</button>${p.absent_confirmed?'✅':`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`}</span></div>`).join(''):'<p class="muted">名单上的人都出现了。</p>'}</section></div>
@@ -97,8 +119,8 @@
     }
     return `<div class="row"><span class="pill ${d.review_ready?'published':'draft'}">${d.review_ready?'灰区已清零':'灰区待复核'}</span><span class="pill ${d.absent_ready?'published':'draft'}">${d.absent_ready?'未出现已逐人确认':'未出现待逐人确认'}</span></div><p class="muted">只有灰区清零、每位「未出现」人员均被单独确认后，才可以发布正式名单。</p>${d.can_publish?`<button class="btn ok" onclick="window.PO.publish()">发布正式名单</button>`:`<button class="btn primary" onclick="window.PO.go('review')">去完成复核</button>`}${note}`;
   }
-  const stat=(k,v,s)=>`<div class="stat"><div class="k">${k}</div><div class="v">${v??0}</div><div class="s">${esc(s||'')}</div></div>`;
-  function personRow(p) { return `<div class="person"><div class="who"><div class="nm">${esc(p.name)}</div><div class="muted small">${p.count} 张 · ${p.auto} 自动${p.manual?' · '+p.manual+' 人工':''}${p.review?' · '+p.review+' 灰区':''}</div>${p.flagged?.length?`<div class="small" style="color:var(--warn)">⚠ ${esc(p.flagged.join('；'))}</div>`:''}</div><div class="thumbs">${p.photos.map(x=>thumb(x,p)).join('')||'<span class="muted small">暂无出现照片</span>'}</div><div class="right">${p.absent?`<button class="btn sm" onclick="window.PO.enrollAbsent(${p.person_id})">上传照片</button>`:''}${p.absent&&!p.absent_confirmed?`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`:''}</div></div>`; }
+  const stat=(k,v,s,tone='blue')=>`<div class="stat ${tone}"><div class="k">${k}</div><div class="v">${v??0}</div><div class="s">${esc(s||'')}</div></div>`;
+  function personRow(p) { return `<div class="person"><div class="who">${avatar(p.name)}<div><div class="nm">${esc(p.name)}</div><div class="muted small">${p.count} 张 · ${p.auto} 自动${p.manual?' · '+p.manual+' 人工':''}${p.review?' · '+p.review+' 灰区':''}</div>${p.flagged?.length?`<div class="small" style="color:var(--warn)">⚠ ${esc(p.flagged.join('；'))}</div>`:''}</div></div><div class="thumbs">${p.photos.map(x=>thumb(x,p)).join('')||'<span class="muted small">暂无出现照片</span>'}</div><div class="right">${p.absent?`<button class="btn sm" onclick="window.PO.enrollAbsent(${p.person_id})">上传照片</button>`:''}${p.absent&&!p.absent_confirmed?`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`:''}</div></div>`; }
   function thumb(x,p) { const idx = faceIndexFor(x.photo_hash,p.person_id); const crop=idx>=0?`/api/crop/${x.photo_hash}/${idx}?size=150`:`/api/image/${x.photo_hash}?max=300`; return `<div class="thumb ${x.manual?'manual':''}" onclick="window.PO.openPhoto('${x.photo_hash}')"><img src="${crop}"><span class="tag">${esc(x.source)}</span></div>`; }
   function faceIndexFor(hash,pid) { const f=S.photoFaces?.[hash]; return f?.faces?.find(x=>x.person_id===pid)?.face_idx ?? -1; }
 
@@ -256,7 +278,7 @@
       const r = await api(`/api/person/photos?person_id=${pid}&${clsQ()}&${rangeQS()}`);
       S.personData=r;
       const groups=r.groups.map(g=>`<div class="activity-group"><div class="activity-head"><b>${esc(g.activity||g.batch)}</b><span class="muted small">${esc(g.date||'无日期')} · ${g.count} 张</span></div><div class="thumbs lg" style="margin-top:10px">${g.photos.map(x=>`<div class="thumb" title="${esc(x.name)}" onclick="window.PO.openPhoto('${x.photo_hash}')"><img loading="lazy" src="${x.face_idx>=0?`/api/crop/${x.photo_hash}/${x.face_idx}?size=200`:`/api/image/${x.photo_hash}?max=320`}"></div>`).join('')}</div></div>`).join('');
-      $('#main').innerHTML=`<section class="card"><div class="row"><button class="btn sm" onclick="window.PO.go('stats')">← 返回年度统计</button><span class="right muted small">点照片看大图</span></div><h2 style="margin-top:12px">${esc(r.name)}<span class="chip" style="margin-left:8px">共 ${r.total} 张</span></h2>${rangeInputs()}</section><section class="card">${groups||'<p class="muted">这个时间范围内没有他/她的照片。</p>'}</section>`;
+      $('#main').innerHTML=`<section class="card"><div class="row"><button class="btn sm" onclick="window.PO.go('stats')">← 返回年度统计</button><span class="right muted small">点照片看大图</span></div><h2 style="margin-top:12px;display:flex;align-items:center;gap:10px">${avatar(r.name)}<span>${esc(r.name)}</span><span class="chip">共 ${r.total} 张</span></h2>${rangeInputs()}</section><section class="card">${groups||'<p class="muted">这个时间范围内没有他/她的照片。</p>'}</section>`;
     } catch(e) {
       $('#main').innerHTML=`<section class="card"><button class="btn sm" onclick="window.PO.go('stats')">← 返回年度统计</button><p class="muted" style="margin-top:10px">${esc(e.message)}</p></section>`;
     }
