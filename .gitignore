@@ -42,6 +42,7 @@ htmlcov/
 vendor/
 windows-offline/
 photoorg-windows-build.zip
+photoorg-windows-build.sha256.txt
 
 # ---------------------------------------------------------------
 # 系统 / 编辑器 / 日志

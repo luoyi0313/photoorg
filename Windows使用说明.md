@@ -108,6 +108,25 @@ Windows 上**不需要安装 Python、数据库或任何服务**。推荐使用�
 > 绿色版采用「文件夹 + exe」形式（onedir），不是单文件 exe：启动更快、杀毒误报更少，
 > 对使用者来说仍然是「解压后双击 exe」。`_internal\` 和 `insightface\` 不能删。
 
+### 代码更新后重新生成传输包
+
+`windows-offline\`（模型 + Python）和 `.venv-build\` 都不用重建，只有 exe 需要重新打包。
+
+如果要重新制作「源码 + 离线包 + bat」的传输 zip：
+
+- **macOS**：双击 `制作传输包.command`；
+- **Windows**：双击 `制作传输包.bat`；
+- 或命令行：`python packaging/make_transfer_zip.py`。
+
+会生成：
+
+```text
+photoorg-windows-build.zip
+photoorg-windows-build.sha256.txt
+```
+
+`data/`、`photos/`、`out/`、`.venv/`、`.venv-build/` 不会被放进传输包。
+
 ---
 
 ## 三、常见问题
