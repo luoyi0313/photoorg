@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,6 +68,46 @@ HEIC_EXTS = {".heic"}
 # ---------------------------------------------------------------- 路径
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def is_frozen() -> bool:
+    """是否运行在 PyInstaller 打出的 exe 里。"""
+    return bool(getattr(sys, "frozen", False))
+
+
+def executable_dir() -> Path:
+    """exe 所在目录；源码模式下是当前目录。"""
+    if is_frozen():
+        return Path(sys.executable).resolve().parent
+    return Path.cwd().resolve()
+
+
+def default_workspace_root() -> Path:
+    """默认工作区。
+
+    - 绿色版 exe：数据放在 exe 旁边，整个文件夹拷走就是全部数据；
+    - 源码模式：沿用原来的「当前目录」；
+    - 高级场景可用 PHOTOORG_ROOT 覆盖。
+    """
+    env = os.environ.get("PHOTOORG_ROOT")
+    if env:
+        return Path(env).expanduser()
+    return executable_dir()
+
+
+def default_model_root() -> Path:
+    """InsightFace 模型根目录（下面结构为 models/<模型名>/）。
+
+    exe 绿色版优先用同目录的 ``insightface/``，这样把模型一起打包即可离线使用；
+    源码模式仍用 ``~/.insightface``，与原有行为一致。
+    PHOTOORG_MODEL_ROOT 可覆盖。
+    """
+    env = os.environ.get("PHOTOORG_MODEL_ROOT")
+    if env:
+        return Path(env).expanduser()
+    if is_frozen():
+        return executable_dir() / "insightface"
+    return Path.home() / ".insightface"
 
 
 def safe_name(name: str) -> str:

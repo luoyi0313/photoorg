@@ -20,6 +20,7 @@ out/
 # ---------------------------------------------------------------
 
 .venv/
+.venv-build/
 venv/
 env/
 
@@ -36,6 +37,11 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# 打包时下载的模型缓存 / 离线准备包（体积大，不入库）
+vendor/
+windows-offline/
+photoorg-windows-build.zip
 
 # ---------------------------------------------------------------
 # 系统 / 编辑器 / 日志

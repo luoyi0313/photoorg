@@ -14,7 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .config import Settings, DEFAULT_QUALITY
+from .config import DEFAULT_QUALITY, Settings, default_model_root
 
 
 # --------------------------------------------------------------------- 数据结构
@@ -217,7 +217,7 @@ class FaceEngine:
         self.det_thresh = float(e.get("det_thresh", 0.5))
         name = str(e.get("model_name", "buffalo_l"))
 
-        root = str(model_root) if model_root else "~/.insightface"
+        root = str(model_root) if model_root else str(default_model_root())
         self.app = FaceAnalysis(
             name=name, root=root, allowed_modules=["detection", "recognition"]
         )

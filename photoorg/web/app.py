@@ -28,7 +28,7 @@ from ..archive import rebuild as rebuild_impl
 from ..calibrate import apply as apply_thresholds
 from ..calibrate import suggest as suggest_thresholds
 from ..cluster import accept_cluster, cluster_faces
-from ..config import AppPaths, IMAGE_EXTS, Settings, safe_name
+from ..config import AppPaths, IMAGE_EXTS, Settings, default_model_root, safe_name
 from ..corrections import (
     audit_log,
     clear_photo_person,
@@ -302,7 +302,8 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
 
     @api.get("/api/health")
     def health():
-        return {"ok": True, "version": __version__}
+        # root 用于绿色版启动器判断「端口上的服务是不是同一个工作区」，只在本机回环地址暴露。
+        return {"ok": True, "version": __version__, "root": str(app_paths.root)}
 
     @api.get("/api/bootstrap")
     def bootstrap(cls: str | None = Query(None, alias="class")):
@@ -341,7 +342,11 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             "batches": batches,
             "thresholds": {"t_high": settings.t_high, "t_low": settings.t_low,
                            "margin": settings.margin},
-            "model_dir": str(Path.home() / ".insightface" / "models" / "buffalo_l"),
+            "model_dir": str(
+                default_model_root()
+                / "models"
+                / str(settings.engine.get("model_name", "buffalo_l"))
+            ),
             "now": now_human(),
         }
 

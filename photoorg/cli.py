@@ -19,7 +19,7 @@ from .archive import diff_auto_vs_manual, rebuild as rebuild_impl
 from .calibrate import apply as apply_thresholds
 from .calibrate import suggest as suggest_thresholds
 from .cluster import accept_cluster, cluster_faces
-from .config import AppPaths, Settings, safe_name
+from .config import AppPaths, Settings, default_model_root, safe_name
 from .corrections import (
     CSV_HEADER,
     decide_face,
@@ -180,7 +180,7 @@ def cmd_enroll(args) -> int:
             _warn(x)
         return 0
     src = Path(args.from_dir)
-    print(f"从 {src} 批量入库……（第一次会在 ~/.insightface 下载模型）")
+    print(f"从 {src} 批量入库……（第一次会自动下载人脸模型）")
     r = enroll_from_dirs(app, class_name, src)
     total = sum(p["added"] for p in r["persons"])
     for p in r["persons"]:
@@ -599,11 +599,11 @@ def cmd_doctor(args) -> int:
     except Exception as e:
         print(f"insightface ❌ {e}")
     print(f"numpy       {numpy.__version__}")
-    model_dir = Path.home() / ".insightface" / "models" / "buffalo_l"
+    model_dir = default_model_root() / "models" / "buffalo_l"
     if model_dir.exists():
         print(f"模型        {model_dir}")
     else:
-        print("模型        未下载（首次运行自动下载 ~290MB）")
+        print(f"模型        未下载（首次运行自动下载，目标：{model_dir}）")
     app = _app(args)
     try:
         cls = _class(args)
