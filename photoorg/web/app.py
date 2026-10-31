@@ -563,13 +563,13 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         class_name: str = Form(...),
         batch: str = Form(...),
         person_id: int = Form(...),
-        add_template: bool = Form(True),
         files: list[UploadFile] = File(...),
     ):
         """把「这次活动里拍到某个人」的照片补进当前活动，并直接记为出现。
 
-        与底库上传不同：照片进入 photos/<批次>/，参与本活动的归档与出勤统计；
-        可选把最清晰的脸同时加入底库，方便下次自动识别。
+        与底库上传不同：照片只进入 photos/<批次>/，参与本活动的归档与出勤统计，
+        不会自动变成底库模板（活动抓拍通常达不到底库质量要求）。需要时可在照片
+        详情里对单张脸手动「加为模板」。
         """
         try:
             c = safe_name(class_name)
@@ -629,7 +629,6 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         hashes = reuse + [sha256_file(p) for p in new_files]
 
         ostore = OverrideStore(app_paths.class_paths(c).overrides_db)
-        templates = 0
         no_face = 0
         for h in hashes:
             faces = cdb.faces(h)
@@ -650,16 +649,6 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
                 face_uid=face_uid(h, int(main["face_idx"])), value=str(person_id),
                 source="web_upload", operator="ui", reason="结果审查：上传活动照片", batch=batch,
             )
-            if add_template:
-                try:
-                    r = add_template_from_face(
-                        app_paths, c, int(person_id), h, int(main["face_idx"]),
-                        source="web_upload",
-                    )
-                    if r.get("added"):
-                        templates += 1
-                except UserError:
-                    pass
 
         sstore = StateStore(app_paths.class_paths(c).batch_state)
         sstore.note_edit(
@@ -676,7 +665,6 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             "photos_added": len(hashes),
             "photos_skipped": len(skipped),
             "no_face": no_face,
-            "templates_added": templates,
             "present_after": pr.present_count if pr else 0,
             "state": sstore.get(batch),
             "rebuild": rebuilt,

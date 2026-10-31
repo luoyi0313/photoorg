@@ -149,7 +149,18 @@
   async function settings() { $('#main').innerHTML=`<section class="card"><h2>设置与审计：日常通常不需要操作</h2><p class="muted">这里放的是“纠错、追溯和重建”工具。正常流程只需上传底库、上传活动照片、复核后发布；只有出现下面的特殊情况时才需要来这里。</p><div class="grid c3"><div class="hint"><b>① 我手动改了归档文件夹</b><br>例如在资源管理器里把一张照片拖给了另一个人：点“吸收手动拖动”，把变化写回系统，避免下次重建丢失。</div><div class="hint"><b>② 想恢复整理后的归档</b><br>如果 out/ 文件夹被误删或混乱，点顶部“重建归档”。原始活动照片和识别结论不会丢。</div><div class="hint"><b>③ 想追查谁改过结果</b><br>在下面的审计日志查看人工确认、改判、移出和发布等操作；也可导出 CSV 留档。</div></div></section><div class="split" style="margin-top:14px"><section class="card"><h2>识别阈值校准（高级）</h2><p class="muted">当你已经人工复核过许多灰区，才建议生成阈值建议。它不会自动改动；采纳后会影响历史批次重新匹配的判断。</p><button class="btn" onclick="window.PO.calibrate()">生成校准建议</button><div id="calResult" style="margin-top:12px"></div></section><section class="card"><h2>手动文件调整</h2><p class="muted">通常直接在网页“结果审查”里改判更安全。只有你确实在 Finder / 资源管理器中手动移动 out/ 下的归档照片时，才使用此功能。</p><button class="btn" onclick="window.PO.adopt()">吸收手动拖动</button> <a class="btn" href="/api/export/overrides.csv?${batchQ()}">导出人工修正 CSV</a><p class="muted small">人工修正会保留完整时间和原因记录，方便撤销和追溯。</p></section></div><section class="card" style="margin-top:14px"><div class="row"><div><h2>最近审计日志</h2><span class="muted small">记录所有人工确认、改判、移出、吸收和发布操作。</span></div><button class="btn sm right" onclick="window.PO.showAudit()">刷新日志</button></div><div id="auditLog" class="muted">正在读取…</div></section><section class="card" style="margin-top:14px"><div class="row"><div><h2>删除班级（危险）</h2><span class="muted small">会删除「${esc(S.cls||'—')}」的名单关系、底库模板、识别数据与 out/ 归档。</span></div><button class="btn danger right" onclick="window.PO.confirmDeleteClass()">删除班级</button></div><p class="muted small" style="margin-top:8px">提示：删除活动请到「活动照片」页，那里有「删除本活动」；只想删掉某张照片也在那一页。</p></section>`; showAudit(); }
 
   async function openPhoto(hash) { try { const d=await api('/api/photo/'+hash+'?'+clsQ()); S.photoFaces=S.photoFaces||{}; S.photoFaces[hash]=d; const faces=d.faces; const labels=faces.map(f=>`<div class="facechip"><img src="/api/crop/${hash}/${f.face_idx}?size=100"><span><b>${esc(f.person_name||'未知')}</b><br><small>${esc(f.status)} · ${f.score.toFixed(2)} ${f.manual?'· 人工':''}</small></span><button class="btn sm" onclick="window.PO.openFaceDecision('${hash}',${f.face_idx})">改判</button></div>`).join(''); modal(`<div class="head"><h2>${esc(d.name||hash.slice(0,8))}</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="photo-stage"><img id="photoStageImg" src="/api/image/${hash}?max=1500" onload="window.PO.drawFaces(this,'${hash}')"><div id="faceBoxes"></div></div><h3 style="margin-top:12px">照片内人脸</h3><div>${labels||'未检出脸'}</div><div class="hint">“移出此人”要在对应人员缩略图中操作；“改判”会同时更新脸层和照片×人层结论。</div>`); } catch(e){toast(e.message,'bad');} }
-  async function openFaceDecision(hash,idx) { const d=S.photoFaces?.[hash] || await api('/api/photo/'+hash+'?'+clsQ()); const f=d.faces.find(x=>x.face_idx===idx); const roster=S.data.persons.map(p=>`<option value="${p.person_id}" ${p.person_id===f.person_id?'selected':''}>${esc(p.name)}</option>`).join(''); modal(`<div class="head"><h2>改判这张脸</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="row"><img style="width:160px;height:160px;object-fit:cover;border-radius:10px" src="/api/crop/${hash}/${idx}?size=300"><div><p>自动候选：<b>${esc(f.person_name||'未知')}</b> · ${f.score.toFixed(2)}</p><select id="facePerson">${roster}</select><div class="row" style="margin-top:12px"><button class="btn primary" onclick="window.PO.setFace('${hash}',${idx})">确认/改判</button><button class="btn" onclick="window.PO.setFaceUnknown('${hash}',${idx})">不认识</button>${f.person_id?`<button class="btn danger" onclick="window.PO.setPair('${hash}',${f.person_id},'absent')">移出 ${esc(f.person_name)}</button>`:''}</div></div></div>`); }
+  async function openFaceDecision(hash,idx) { const d=S.photoFaces?.[hash] || await api('/api/photo/'+hash+'?'+clsQ()); const f=d.faces.find(x=>x.face_idx===idx); const roster=S.data.persons.map(p=>`<option value="${p.person_id}" ${p.person_id===f.person_id?'selected':''}>${esc(p.name)}</option>`).join(''); modal(`<div class="head"><h2>改判这张脸</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="row"><img style="width:160px;height:160px;object-fit:cover;border-radius:10px" src="/api/crop/${hash}/${idx}?size=300"><div><p>自动候选：<b>${esc(f.person_name||'未知')}</b> · ${f.score.toFixed(2)}</p><select id="facePerson">${roster}</select><div class="row" style="margin-top:12px"><button class="btn primary" onclick="window.PO.setFace('${hash}',${idx})">确认/改判</button><button class="btn" onclick="window.PO.setFaceUnknown('${hash}',${idx})">不认识</button>${f.person_id?`<button class="btn danger" onclick="window.PO.setPair('${hash}',${f.person_id},'absent')">移出 ${esc(f.person_name)}</button>`:''}</div><div class="row" style="margin-top:8px"><button class="btn sm" onclick="window.PO.addTemplate('${hash}',${idx})">加为模板</button><span class="muted small">把这张脸加入所选人员的底库（会过质量门控与去重，不合格会说明原因）</span></div></div></div>`); }
+  async function addTemplate(hash, idx) {
+    const pid = Number($('#facePerson')?.value);
+    if (!pid) { toast('请先选择人员', 'bad'); return; }
+    try {
+      const r = await post('/api/gallery/add', { batch: S.batch, photo_hash: hash, face_idx: idx, person_id: pid });
+      const res = r.result || {};
+      if (res.added) toast('已加入底库', 'ok');
+      else toast('没有加入底库：' + (res.reason || '质量不达标或与已有模板太像'), 'bad');
+      await refresh();
+    } catch (e) { toast(e.message, 'bad'); }
+  }
   async function setFace(hash,idx) { await decideModalFace(hash,idx,'present',Number($('#facePerson').value)); }
   async function setFaceUnknown(hash,idx) { await decideModalFace(hash,idx,'unknown'); }
   async function decideModalFace(hash,idx,action,personId=null) { try { await post('/api/review/decide',{batch:S.batch,photo_hash:hash,face_idx:idx,action,person_id:personId,operator:operator()}); closeModal(); toast(action==='present'?'已确认并重建归档':'已标为不认识','ok'); await refresh(); } catch(e){toast(e.message,'bad');} }
@@ -234,10 +245,10 @@
     if(!p){toast('找不到这个人员','bad');return;}
     const hasBatch = !!S.batch;
     modal(`<div class="head"><h2>给 ${esc(p.name)} 补本次活动照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
-      <p class="muted">选择 <b>${esc(S.batch||'当前活动')}</b> 里确实拍到 ${esc(p.name)} 的照片（1～10 张）。这些照片会加入本次活动，并直接记为「${esc(p.name)} 出现」，会计入归档和出勤统计。</p>
+      <p class="muted">选择 <b>${esc(S.batch||'当前活动')}</b> 里确实拍到 ${esc(p.name)} 的照片（1～10 张）。这些照片只加入本次活动，并直接记为「${esc(p.name)} 出现」，会计入归档和出勤统计。</p>
       <input id="personPhotoFiles" type="file" accept="image/*,.heic" multiple>
       <div id="personPhotoInfo" class="hint" style="margin-top:10px">尚未选择照片。</div>
-      <label class="row" style="gap:8px;margin-top:12px;justify-content:flex-start"><input id="personPhotoTemplate" type="checkbox" checked> 同时把照片里最大的脸加入底库（下次自动识别）</label>
+      <div class="hint" style="margin-top:10px">活动抓拍一般达不到底库要求，这里<b>不会</b>把照片加进底库。确实想补底库时，请在照片详情里对单张清晰正脸点「加为模板」。</div>
       <div class="row" style="margin-top:14px"><button class="btn primary" id="personPhotoSubmit" onclick="window.PO.submitPersonUpload(${pid})" ${hasBatch?'':'disabled'}>加入本次活动</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>
       ${hasBatch?'':'<p class="hint" style="margin-top:10px">当前没有选中活动，请先在顶部选择批次。</p>'}`);
     const f=$('#personPhotoFiles'); if(f) f.onchange=()=>setText('#personPhotoInfo', f.files.length?`已选择 ${f.files.length} 张照片。`:'尚未选择照片。');
@@ -249,7 +260,6 @@
     form.append('class_name',S.cls);
     form.append('batch',S.batch||'');
     form.append('person_id',String(pid));
-    form.append('add_template', $('#personPhotoTemplate')?.checked ? 'true' : 'false');
     for(const file of f.files) form.append('files',file,file.name);
     const btn=$('#personPhotoSubmit'); if(btn){btn.disabled=true;btn.textContent='正在加入并重新归档…';}
     try {
@@ -257,9 +267,7 @@
       const d=await res.json();
       if(!res.ok) throw new Error(d.detail||'上传失败');
       closeModal();
-      let msg=`${d.person}：已加入 ${d.photos_added} 张活动照片`;
-      if(d.templates_added) msg += `，底库 +${d.templates_added} 张`;
-      msg += `；本活动现在有 ${d.present_after} 张`;
+      const msg = `${d.person}：已加入 ${d.photos_added} 张活动照片；本活动现在有 ${d.present_after} 张`;
       toast(msg,'ok');
       if(d.no_face) toast(`有 ${d.no_face} 张没检出脸，未计入`, '');
       if(d.photos_skipped) toast(`${d.photos_skipped} 张已在其他活动里，已跳过`, '');
@@ -407,6 +415,6 @@
     } catch(e){ toast(e.message,'bad'); }
   }
 
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();
