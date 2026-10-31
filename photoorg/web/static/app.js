@@ -104,7 +104,7 @@
        ${stat('照片',st.n_photos,`失败 ${st.n_error||0} 张`,'blue')}${stat('检出人脸',st.n_faces,`质量达标 ${st.n_usable_faces||0} 张`,'violet')}${stat('出现',st.n_pairs_present,'按「照片×人」计数','green')}${stat('待复核',d.review_count, d.review_count?'请在灰区复核页确认':'本次数据很干净', d.review_count?'amber':'slate')}
       </div>
       <div class="split"><section class="card"><h2>处理进度</h2>${progressActions(d)}</section>
-      <section class="card"><h2>未出现名单</h2>${absent.length?absent.map(p=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b><span class="muted small">${p.absent_confirmed?'已确认':'待确认'}</span><span class="right"><button class="btn sm" onclick="window.PO.enrollAbsent(${p.person_id})">上传照片</button>${p.absent_confirmed?'✅':`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`}</span></div>`).join(''):'<p class="muted">名单上的人都出现了。</p>'}</section></div>
+      <section class="card"><h2>未出现名单</h2>${absent.length?absent.map(p=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(p.name)}</b><span class="muted small">${p.absent_confirmed?'已确认':'待确认'}</span><span class="right"><button class="btn sm" onclick="window.PO.openPersonUpload(${p.person_id})">补活动照片</button>${p.absent_confirmed?'✅':`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`}</span></div>`).join(''):'<p class="muted">名单上的人都出现了。</p>'}</section></div>
       <section class="card"><div class="row"><h2>按人审查</h2><span class="muted small">点缩略图查看大图，移出错归或加模板</span><span class="right"><button class="btn sm" onclick="window.PO.go('inspect')">展开全部审查</button></span></div>${persons.slice(0,8).map(personRow).join('')}${persons.length>8?'<p class="muted small">仅显示前 8 人，完整列表在「结果审查」。</p>':''}</section>`;
   }
   // 发布状态决定按钮语义：已发布时不能再显示“去复核/发布”，否则界面自相矛盾。
@@ -120,7 +120,7 @@
     return `<div class="row"><span class="pill ${d.review_ready?'published':'draft'}">${d.review_ready?'灰区已清零':'灰区待复核'}</span><span class="pill ${d.absent_ready?'published':'draft'}">${d.absent_ready?'未出现已逐人确认':'未出现待逐人确认'}</span></div><p class="muted">只有灰区清零、每位「未出现」人员均被单独确认后，才可以发布正式名单。</p>${d.can_publish?`<button class="btn ok" onclick="window.PO.publish()">发布正式名单</button>`:`<button class="btn primary" onclick="window.PO.go('review')">去完成复核</button>`}${note}`;
   }
   const stat=(k,v,s,tone='blue')=>`<div class="stat ${tone}"><div class="k">${k}</div><div class="v">${v??0}</div><div class="s">${esc(s||'')}</div></div>`;
-  function personRow(p) { return `<div class="person"><div class="who">${avatar(p.name)}<div><div class="nm">${esc(p.name)}</div><div class="muted small">${p.count} 张 · ${p.auto} 自动${p.manual?' · '+p.manual+' 人工':''}${p.review?' · '+p.review+' 灰区':''}</div>${p.flagged?.length?`<div class="small" style="color:var(--warn)">⚠ ${esc(p.flagged.join('；'))}</div>`:''}</div></div><div class="thumbs">${p.photos.map(x=>thumb(x,p)).join('')||'<span class="muted small">暂无出现照片</span>'}</div><div class="right">${p.absent?`<button class="btn sm" onclick="window.PO.enrollAbsent(${p.person_id})">上传照片</button>`:''}${p.absent&&!p.absent_confirmed?`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`:''}</div></div>`; }
+  function personRow(p) { return `<div class="person"><div class="who">${avatar(p.name)}<div><div class="nm">${esc(p.name)}</div><div class="muted small">${p.count} 张 · ${p.auto} 自动${p.manual?' · '+p.manual+' 人工':''}${p.review?' · '+p.review+' 灰区':''}</div>${p.flagged?.length?`<div class="small" style="color:var(--warn)">⚠ ${esc(p.flagged.join('；'))}</div>`:''}</div></div><div class="thumbs">${p.photos.map(x=>thumb(x,p)).join('')||'<span class="muted small">暂无出现照片</span>'}</div><div class="right">${p.absent?`<button class="btn sm" onclick="window.PO.openPersonUpload(${p.person_id})">补活动照片</button>`:''}${p.absent&&!p.absent_confirmed?`<button class="btn sm" onclick="window.PO.confirmAbsent(${p.person_id},true)">确认未出现</button>`:''}</div></div>`; }
   function thumb(x,p) { const idx = faceIndexFor(x.photo_hash,p.person_id); const crop=idx>=0?`/api/crop/${x.photo_hash}/${idx}?size=150`:`/api/image/${x.photo_hash}?max=300`; return `<div class="thumb ${x.manual?'manual':''}" onclick="window.PO.openPhoto('${x.photo_hash}')"><img src="${crop}"><span class="tag">${esc(x.source)}</span></div>`; }
   function faceIndexFor(hash,pid) { const f=S.photoFaces?.[hash]; return f?.faces?.find(x=>x.person_id===pid)?.face_idx ?? -1; }
 
@@ -229,37 +229,42 @@
   async function setPair(hash,pid,action) { try { await post('/api/pair',{batch:S.batch,photo_hash:hash,person_id:pid,action,operator:operator(),reason:action==='absent'?'结果审查：移出此人':''}); closeModal(); toast(action==='absent'?'已移出并重建':'已加入并重建','ok'); await refresh(); }catch(e){toast(e.message,'bad');} }
   async function confirmAbsent(pid,confirmed) { try{await post('/api/absent/confirm',{batch:S.batch,person_id:pid,confirmed,by:operator()}); toast(confirmed?'已确认未出现':'已取消确认','ok'); await refresh();}catch(e){toast(e.message,'bad');} }
   // 未出现的人多半是底库没照片：直接把这个人从活动照片里补进底库，再重跑本批次。
-  function enrollAbsent(pid) {
+  function openPersonUpload(pid) {
     const p=(S.data?.persons||[]).find(x=>x.person_id===pid);
     if(!p){toast('找不到这个人员','bad');return;}
-    modal(`<div class="head"><h2>给 ${esc(p.name)} 补底库照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
-      <p class="muted">从这台电脑选择 ${esc(p.name)} 的清晰照片（1～10 张，单人正脸最好，避免多人合照）。入库后会立即重新识别当前活动 ${esc(S.batch)}，认出来的人会自动从「未出现」变成「出现」。</p>
-      <input id="absentFiles" type="file" accept="image/*,.heic" multiple>
-      <div id="absentInfo" class="hint" style="margin-top:10px">尚未选择照片。</div>
-      <div class="row" style="margin-top:14px"><button class="btn primary" id="absentSubmit" onclick="window.PO.submitAbsent(${pid})">上传并重新识别</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>`);
-    const f=$('#absentFiles'); if(f) f.onchange=()=>setText('#absentInfo', f.files.length?`已选择 ${f.files.length} 张照片。`:'尚未选择照片。');
+    const hasBatch = !!S.batch;
+    modal(`<div class="head"><h2>给 ${esc(p.name)} 补本次活动照片</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
+      <p class="muted">选择 <b>${esc(S.batch||'当前活动')}</b> 里确实拍到 ${esc(p.name)} 的照片（1～10 张）。这些照片会加入本次活动，并直接记为「${esc(p.name)} 出现」，会计入归档和出勤统计。</p>
+      <input id="personPhotoFiles" type="file" accept="image/*,.heic" multiple>
+      <div id="personPhotoInfo" class="hint" style="margin-top:10px">尚未选择照片。</div>
+      <label class="row" style="gap:8px;margin-top:12px;justify-content:flex-start"><input id="personPhotoTemplate" type="checkbox" checked> 同时把照片里最大的脸加入底库（下次自动识别）</label>
+      <div class="row" style="margin-top:14px"><button class="btn primary" id="personPhotoSubmit" onclick="window.PO.submitPersonUpload(${pid})" ${hasBatch?'':'disabled'}>加入本次活动</button><button class="btn" onclick="window.PO.closeModal()">取消</button></div>
+      ${hasBatch?'':'<p class="hint" style="margin-top:10px">当前没有选中活动，请先在顶部选择批次。</p>'}`);
+    const f=$('#personPhotoFiles'); if(f) f.onchange=()=>setText('#personPhotoInfo', f.files.length?`已选择 ${f.files.length} 张照片。`:'尚未选择照片。');
   }
-  async function submitAbsent(pid) {
-    const f=$('#absentFiles');
+  async function submitPersonUpload(pid) {
+    const f=$('#personPhotoFiles');
     if(!f?.files?.length){toast('请先选择照片','bad');return;}
     const form=new FormData();
-    form.append('class_name',S.cls); form.append('person_id',String(pid));
-    form.append('batch',S.batch||''); form.append('rematch','true');
+    form.append('class_name',S.cls);
+    form.append('batch',S.batch||'');
+    form.append('person_id',String(pid));
+    form.append('add_template', $('#personPhotoTemplate')?.checked ? 'true' : 'false');
     for(const file of f.files) form.append('files',file,file.name);
-    const btn=$('#absentSubmit'); if(btn){btn.disabled=true;btn.textContent='正在入库并重新识别…';}
+    const btn=$('#personPhotoSubmit'); if(btn){btn.disabled=true;btn.textContent='正在加入并重新归档…';}
     try {
-      const res=await fetch('/api/gallery/upload',{method:'POST',body:form});
+      const res=await fetch('/api/person/photos/add',{method:'POST',body:form});
       const d=await res.json();
       if(!res.ok) throw new Error(d.detail||'上传失败');
       closeModal();
-      let msg=`${d.person}：入库 ${d.result.added} 张模板`;
-      if(d.present_after!==undefined) msg += d.absent_after
-        ? '；重跑后仍没认出来，换更清晰的正脸照再试'
-        : `；本活动已认出 ${d.present_after} 张照片`;
-      toast(msg, d.result.added?'ok':'bad');
+      let msg=`${d.person}：已加入 ${d.photos_added} 张活动照片`;
+      if(d.templates_added) msg += `，底库 +${d.templates_added} 张`;
+      msg += `；本活动现在有 ${d.present_after} 张`;
+      toast(msg,'ok');
+      if(d.no_face) toast(`有 ${d.no_face} 张没检出脸，未计入`, '');
+      if(d.photos_skipped) toast(`${d.photos_skipped} 张已在其他活动里，已跳过`, '');
       await refresh();
-      if((d.result.rejected||[]).length) toast(`有 ${d.result.rejected.length} 张照片没通过质量检查`,'');
-    } catch(e){ toast(e.message,'bad'); if(btn){btn.disabled=false;btn.textContent='上传并重新识别';} }
+    } catch(e){ toast(e.message,'bad'); if(btn){btn.disabled=false;btn.textContent='加入本次活动';} }
   }
   async function unpublish() {
     if(!confirm('撤回发布后，报告会变回草稿，需要重新确认才能再次发布。确定？')) return;
@@ -402,6 +407,6 @@
     } catch(e){ toast(e.message,'bad'); }
   }
 
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,confirmAbsent,enrollAbsent,submitAbsent,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,closeModal,openActivityUpload,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();

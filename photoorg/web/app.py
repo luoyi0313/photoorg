@@ -39,7 +39,8 @@ from ..corrections import (
 )
 from ..db import ClassDB, OverrideStore, PersonStore
 from ..engine import FaceEngine
-from ..imaging import crop_box, imread, iter_images, jpeg_bytes, resize_max, safe_photo_name
+from ..imaging import crop_box, imread, iter_images, jpeg_bytes, resize_max, safe_photo_name, sha256_file
+from ..matching import face_uid
 from ..pipeline import UserError, batch_meta, load_settings, rematch, resolve_batch_dir, run_batch, save_settings
 from ..report import build_csv, build_markdown
 from ..results import compute_batch, photo_faces_detail
@@ -555,6 +556,130 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             "n_added": sum(r["added"] for r in results),
             "n_rejected": sum(r["n_rejected"] for r in results),
             "skipped_files": skipped_files,
+        }
+
+    @api.post("/api/person/photos/add")
+    async def person_photo_add(
+        class_name: str = Form(...),
+        batch: str = Form(...),
+        person_id: int = Form(...),
+        add_template: bool = Form(True),
+        files: list[UploadFile] = File(...),
+    ):
+        """把「这次活动里拍到某个人」的照片补进当前活动，并直接记为出现。
+
+        与底库上传不同：照片进入 photos/<批次>/，参与本活动的归档与出勤统计；
+        可选把最清晰的脸同时加入底库，方便下次自动识别。
+        """
+        try:
+            c = safe_name(class_name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        store = PersonStore(app_paths.persons_db)
+        person = store.person(int(person_id))
+        if not person:
+            raise HTTPException(404, "人员不存在")
+        klass = store.klass(c)
+        if klass and int(person_id) not in {int(r["id"]) for r in store.roster(int(klass["id"]))}:
+            raise HTTPException(400, f"「{person['name']}」不在这个班的名单里")
+        target = app_paths.photos / batch
+        if not target.exists():
+            raise HTTPException(404, f"活动「{batch}」的照片文件夹不存在")
+        if not files:
+            raise HTTPException(400, "请至少选择一张照片")
+
+        cdb = ClassDB(app_paths.class_paths(c).faces_db)
+        used: set[str] = set()
+        saved: list[Path] = []
+        for upload in files:
+            item = await _save_upload(upload, target, used)
+            if item:
+                saved.append(item)
+        if not saved:
+            raise HTTPException(400, "没有收到可用图片；支持 JPG、PNG、WEBP、BMP、TIFF")
+
+        new_files: list[Path] = []
+        reuse: list[str] = []
+        skipped: list[str] = []
+        seen: set[str] = set()
+        for path in saved:
+            h = sha256_file(path)
+            if h in seen:
+                path.unlink(missing_ok=True)
+                continue
+            seen.add(h)
+            row = cdb.photo(h)
+            if row is None:
+                new_files.append(path)
+                continue
+            # 库里已有同一张照片：不重复占空间，直接复用它的识别结果
+            path.unlink(missing_ok=True)
+            if row["batch"] == batch:
+                reuse.append(h)
+            else:
+                skipped.append(f"已在批次「{row['batch']}」")
+        if not new_files and not reuse:
+            raise HTTPException(400, "这些照片已经在别的活动里了：" + "；".join(skipped[:3]))
+
+        if new_files:
+            try:
+                run_batch(app_paths, c, batch)
+            except UserError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        hashes = reuse + [sha256_file(p) for p in new_files]
+
+        ostore = OverrideStore(app_paths.class_paths(c).overrides_db)
+        templates = 0
+        no_face = 0
+        for h in hashes:
+            faces = cdb.faces(h)
+            if not faces:
+                no_face += 1
+                continue
+            main = max(
+                faces,
+                key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]),
+            )
+            ostore.add(
+                "photo_person", "present", photo_hash=h, person_id=int(person_id),
+                value="present", source="web_upload", operator="ui",
+                reason=f"结果审查：上传活动照片记为「{person['name']}」出现", batch=batch,
+            )
+            ostore.add(
+                "face_assign", "assign", photo_hash=h, person_id=int(person_id),
+                face_uid=face_uid(h, int(main["face_idx"])), value=str(person_id),
+                source="web_upload", operator="ui", reason="结果审查：上传活动照片", batch=batch,
+            )
+            if add_template:
+                try:
+                    r = add_template_from_face(
+                        app_paths, c, int(person_id), h, int(main["face_idx"]),
+                        source="web_upload",
+                    )
+                    if r.get("added"):
+                        templates += 1
+                except UserError:
+                    pass
+
+        sstore = StateStore(app_paths.class_paths(c).batch_state)
+        sstore.note_edit(
+            batch, by="ui",
+            note=f"补充活动照片并记为「{person['name']}」出现（{len(hashes)} 张）",
+        )
+        view = compute_batch(app_paths, c, batch)
+        rebuilt = rebuild_impl(app_paths, c, batch, view=view)
+        pr = next((p for p in view.persons if p.person_id == int(person_id)), None)
+        return {
+            "class": c,
+            "batch": batch,
+            "person": person["name"],
+            "photos_added": len(hashes),
+            "photos_skipped": len(skipped),
+            "no_face": no_face,
+            "templates_added": templates,
+            "present_after": pr.present_count if pr else 0,
+            "state": sstore.get(batch),
+            "rebuild": rebuilt,
         }
 
     @api.get("/api/batch")
