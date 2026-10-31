@@ -75,12 +75,13 @@ def cluster_faces(
     photos = {p["hash"]: p for p in cdb.photos(batch=batch)}
     decisions = {(d["photo_hash"], d["face_idx"]): d for d in cdb.decisions(batch=batch)}
     faces = {(f["photo_hash"], f["face_idx"]): f for f in cdb.faces()}
-    assigned_pids = set()
+    keep_rows: list[int] = []
     for i, (h, fi) in enumerate(zip(hashes, idxs)):
         d = decisions.get((h, fi))
         f = faces.get((h, fi))
         if only_unknown and d and d["status"] == "present":
             continue
+        keep_rows.append(i)
         meta.append(
             {
                 "photo_hash": h,
@@ -94,6 +95,8 @@ def cluster_faces(
         )
     if not meta:
         return []
+    # meta 跳过了一部分脸，必须先按同样的行号裁剪矩阵，否则并查集下标会越界
+    mat = mat[keep_rows]
     if len(meta) > max_faces:
         keep = np.argsort([-m["quality"] for m in meta])[:max_faces]
         meta = [meta[i] for i in keep]

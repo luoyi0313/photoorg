@@ -159,7 +159,9 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
     async def no_cache_api_responses(request: Request, call_next):
         """本机 UI 的数据必须反映 SQLite 当前值，不能缓存旧的发布/识别状态。"""
         response = await call_next(request)
-        if request.url.path.startswith("/api/"):
+        # API 与 HTML 外壳都不缓存：改了界面后用户刷新一次就能拿到新版本
+        path = request.url.path
+        if path.startswith("/api/") or path == "/" or path.endswith(".html"):
             response.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
             response.headers["Pragma"] = "no-cache"
         return response

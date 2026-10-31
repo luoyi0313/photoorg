@@ -1,0 +1,23 @@
+# 换行符约定：Windows 脚本必须 CRLF，macOS 脚本必须 LF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf
+
+# 文本文件统一 LF
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.onnx binary
+*.zip binary
+*.db binary

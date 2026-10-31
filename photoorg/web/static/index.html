@@ -5,30 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#2f6feb">
   <title>照片归档 · 出勤统计</title>
-  <link rel="stylesheet" href="/static/app.css?v=20261031-transpose">
+  <link rel="stylesheet" href="/static/app.css?v=20261031-ui6">
 </head>
 <body>
 <header class="top">
   <div class="top-inner">
     <div class="brand"><i class="dot"></i><span>照片归档 · 出勤统计</span></div>
-    <label class="small muted">班级 <select id="classSelect"></select></label>
-    <label class="small muted">批次 <select id="batchSelect"></select></label>
-    <span id="statePill" class="pill grey">加载中</span>
+    <div class="controls">
+      <label class="field"><span>班级</span><select id="classSelect"></select></label>
+      <label class="field"><span>批次</span><select id="batchSelect"></select></label>
+      <span id="statePill" class="pill grey">加载中</span>
+    </div>
     <span class="spacer"></span>
-    <button class="btn sm" id="rebuildBtn" title="完全从数据库重建 out/ 目录">重建归档</button>
-    <a class="btn sm" id="outReport" target="_blank">下载报告</a>
+    <div class="header-actions">
+      <button class="btn sm" id="rebuildBtn" title="完全从数据库重建 out/ 目录">重建归档</button>
+      <a class="btn sm" id="outReport" target="_blank" title="下载全班出勤统计表（活动×人员，CSV）">下载报告</a>
+    </div>
   </div>
   <nav class="tabs" id="tabs">
     <button data-page="overview" class="on">总览</button>
     <button data-page="review">灰区复核 <span id="reviewBadge" class="badge zero">0</span></button>
     <button data-page="inspect">结果审查</button>
     <button data-page="gallery">底库管理</button>
+    <button data-page="stats">年度统计</button>
+    <button data-page="photos">活动照片</button>
     <button data-page="clusters">冷启动聚类</button>
     <button data-page="settings">设置与审计</button>
   </nav>
 </header>
 <main id="main"><div class="empty"><div class="big">⏳</div>正在读取本地数据…</div></main>
 <div id="modalRoot"></div><div id="toasts"></div>
-<script src="/static/app.js?v=20261031-transpose"></script>
+<script src="/static/app.js?v=20261031-ui6"></script>
 </body>
 </html>
