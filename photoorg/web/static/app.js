@@ -232,13 +232,13 @@
     return `<div class="row" style="margin-top:10px;align-items:flex-end"><label class="small">开始日期<br><input id="rangeFrom" type="date" value="${f}"></label><label class="small">结束日期<br><input id="rangeTo" type="date" value="${t}"></label><button class="btn" onclick="window.PO.applyRange()">筛选</button><button class="btn ghost" onclick="window.PO.clearRange()">全部时间</button><span class="muted small">${f||t?`当前范围：${f||'最早'} ～ ${t||'最新'}`:'当前范围：全部活动'}</span></div>`;
   }
   async function stats() {
-    $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>年度统计：活动 × 人员</h2><div class="muted small">每一格 = 这个人在该活动里出现的照片张数；点人名可以看他的全部照片。</div></div><span class="right"><a class="btn primary" download href="/api/export/matrix.csv?${clsQ()}&${rangeQS()}">下载 CSV（Excel）</a></span></div>${rangeInputs()}<div id="matrixWrap" style="overflow:auto;margin-top:12px"><span class="muted">正在统计…</span></div></section>`;
+    $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>年度统计：活动 × 人员</h2><div class="muted small">行是人员、列是活动；每一格 = 这个人在该活动里出现的照片张数。点人名可以看他的全部照片。</div></div><span class="right"><a class="btn primary" download href="/api/export/matrix.csv?${clsQ()}&${rangeQS()}">下载 CSV（Excel）</a></span></div>${rangeInputs()}<div id="matrixWrap" style="overflow:auto;margin-top:12px"><span class="muted">正在统计…</span></div></section>`;
     try {
       const r = await api('/api/matrix?'+clsQ()+'&'+rangeQS());
       S.matrix = r;
-      const head=`<tr><th class="sticky">活动</th><th>日期</th>${r.persons.map(p=>`<th class="num"><button class="linkbtn" onclick="window.PO.openPerson(${p.person_id})">${esc(p.name)}</button></th>`).join('')}<th class="num">照片数</th></tr>`;
-      const body=r.batches.map(b=>`<tr><td class="sticky"><b>${esc(b.activity||b.batch)}</b></td><td class="muted">${esc(b.date||'—')}</td>${r.persons.map(p=>{const n=p.counts[b.batch]||0;return `<td class="num${n?'':' zero'}">${n||''}</td>`;}).join('')}<td class="num">${b.n_photos}</td></tr>`).join('');
-      const foot=`<tr><td class="sticky"><b>合计</b></td><td></td>${r.persons.map(p=>`<td class="num"><b>${p.total}</b></td>`).join('')}<td class="num"><b>${r.n_photos_total}</b></td></tr>`;
+      const head=`<tr><th class="sticky">人员</th>${r.batches.map(b=>`<th class="num">${esc(b.activity||b.batch)}<br><span class="thdate">${esc(b.date||'—')}</span></th>`).join('')}<th class="num">合计</th></tr>`;
+      const body=r.persons.map(p=>`<tr><td class="sticky"><button class="linkbtn" onclick="window.PO.openPerson(${p.person_id})">${esc(p.name)}</button></td>${r.batches.map(b=>{const n=p.counts[b.batch]||0;return `<td class="num${n?'':' zero'}">${n||''}</td>`;}).join('')}<td class="num"><b>${p.total}</b></td></tr>`).join('');
+      const foot=`<tr><td class="sticky"><b>合计</b></td>${r.batches.map(b=>`<td class="num"><b>${r.batch_totals[b.batch]||0}</b></td>`).join('')}<td class="num"><b>${r.n_pairs_total}</b></td></tr><tr class="muted"><td class="sticky">照片数</td>${r.batches.map(b=>`<td class="num">${b.n_photos}</td>`).join('')}<td class="num">${r.n_photos_total}</td></tr>`;
       $('#matrixWrap').innerHTML = r.batches.length
         ? `<table class="tbl matrix"><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`
         : `<p class="muted">这个时间范围内还没有活动。</p>`;

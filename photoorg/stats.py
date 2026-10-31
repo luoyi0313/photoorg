@@ -120,12 +120,16 @@ def class_matrix(
             }
         )
 
+    batch_totals = {
+        b["batch"]: sum(p["counts"][b["batch"]] for p in person_rows) for b in batches
+    }
     return {
         "class": class_name,
         "from": date_from,
         "to": date_to,
         "batches": batches,
         "persons": person_rows,
+        "batch_totals": batch_totals,
         "n_photos_total": sum(b["n_photos"] for b in batches),
         "n_pairs_total": sum(p["total"] for p in person_rows),
     }
@@ -190,20 +194,26 @@ def person_photos(
 
 
 def matrix_csv(matrix: dict) -> str:
-    """活动为行、人员为列的 CSV；Excel 直接打开需要 UTF-8 BOM。"""
+    """人员为行、活动为列的 CSV；Excel 直接打开需要 UTF-8 BOM。"""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    names = [p["name"] for p in matrix["persons"]]
-    writer.writerow(["活动", "日期"] + names + ["照片数"])
-    for b in matrix["batches"]:
+    batches = matrix["batches"]
+    heads = [f"{b['activity'] or b['batch']} {b['date']}".strip() for b in batches]
+    writer.writerow(["人员"] + heads + ["合计"])
+    for p in matrix["persons"]:
         writer.writerow(
-            [b["activity"] or b["batch"], b["date"]]
-            + [p["counts"][b["batch"]] for p in matrix["persons"]]
-            + [b["n_photos"]]
+            [p["name"]]
+            + [p["counts"][b["batch"]] for b in batches]
+            + [p["total"]]
         )
     writer.writerow(
-        ["合计", ""]
-        + [p["total"] for p in matrix["persons"]]
+        ["合计"]
+        + [matrix["batch_totals"][b["batch"]] for b in batches]
+        + [matrix["n_pairs_total"]]
+    )
+    writer.writerow(
+        ["照片数"]
+        + [b["n_photos"] for b in batches]
         + [matrix["n_photos_total"]]
     )
     return "\ufeff" + buf.getvalue()
