@@ -32,8 +32,9 @@ def _keep(batch: str, date_from: str, date_to: str) -> bool:
 def _present_map(cdb: ClassDB, ostore: OverrideStore, batch: str) -> dict[tuple[str, int], dict]:
     """最终「照片×人=出现」集合（自动结论 + 人工修正）。
 
-    人工修正是按批次记录的：照片搬到别的批次后，旧批次里那条修正已经不再指向
-    本批次存在的照片，必须忽略，否则矩阵会把搬走的照片重复算进来。
+    人工结论按照片内容生效：photo_hash 全局唯一，照片被移到别的活动后，之前
+    的人工结论应该跟着照片走。``in_batch`` 只用来排除已经不在本批次的照片，
+    避免把搬走的照片重复算进来。
     """
     out: dict[tuple[str, int], dict] = {}
     in_batch = {ph["hash"] for ph in cdb.photos(batch=batch)}
@@ -44,7 +45,7 @@ def _present_map(cdb: ClassDB, ostore: OverrideStore, batch: str) -> dict[tuple[
                 "face_idx": int(r["face_idx"]),
                 "manual": False,
             }
-    for (h, pid), o in ostore.photo_person_map(batch=batch).items():
+    for (h, pid), o in ostore.photo_person_map().items():
         if h not in in_batch:
             continue
         if o["action"] == "absent":

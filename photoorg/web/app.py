@@ -644,23 +644,30 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         no_face = 0
         for h in hashes:
             faces = cdb.faces(h)
-            if not faces:
+            main = None
+            if faces:
+                main = max(
+                    faces,
+                    key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]),
+                )
+            else:
                 no_face += 1
-                continue
-            main = max(
-                faces,
-                key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]),
-            )
+            # 人工结论优先：即使系统没检出/没认出对应的人，也照用户的选择记为出现，
+            # 不因自动识别结果而拦截这次人工添加。
+            reason = f"结果审查：上传活动照片记为「{person['name']}」出现"
+            if main is None:
+                reason += "（未检出人脸，按人工标记计入）"
             ostore.add(
                 "photo_person", "present", photo_hash=h, person_id=int(person_id),
                 value="present", source="web_upload", operator="ui",
-                reason=f"结果审查：上传活动照片记为「{person['name']}」出现", batch=batch,
+                reason=reason, batch=batch,
             )
-            ostore.add(
-                "face_assign", "assign", photo_hash=h, person_id=int(person_id),
-                face_uid=face_uid(h, int(main["face_idx"])), value=str(person_id),
-                source="web_upload", operator="ui", reason="结果审查：上传活动照片", batch=batch,
-            )
+            if main is not None:
+                ostore.add(
+                    "face_assign", "assign", photo_hash=h, person_id=int(person_id),
+                    face_uid=face_uid(h, int(main["face_idx"])), value=str(person_id),
+                    source="web_upload", operator="ui", reason="结果审查：上传活动照片", batch=batch,
+                )
 
         sstore = StateStore(app_paths.class_paths(c).batch_state)
         sstore.note_edit(
@@ -852,13 +859,21 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
             for x in p.photos
             if x.photo_hash == hash_
         ]
+        store = PersonStore(app_paths.persons_db)
+        klass = store.klass(c)
+        persons = (
+            [{"person_id": int(r["id"]), "name": r["name"]} for r in store.roster(int(klass["id"]))]
+            if klass else []
+        )
         return {
             "hash": hash_,
             "name": ph["name"],
+            "batch": ph["batch"],
             "width": ph["width"],
             "height": ph["height"],
             "faces": photo_faces_detail(app_paths, c, hash_),
             "present": present,
+            "persons": persons,
         }
 
     @api.get("/api/audit")

@@ -159,7 +159,9 @@ def compute_batch(
     view.state = sstore.get(batch)
 
     auto_pairs = {(r["photo_hash"], int(r["person_id"])): r for r in cdb.pairs(batch=batch)}
-    manual = ostore.photo_person_map(batch=batch)
+    # 人工结论按照片内容生效：photo_hash 全局唯一，照片被移到别的活动后，
+    # 之前的人工「出现/没有」仍然应该跟着照片走，不能悄悄失效。
+    manual = ostore.photo_person_map()
     confirmations = sstore.confirmations(batch)
 
     # ---------- 每人对每张照片的最终结论
@@ -244,7 +246,7 @@ def compute_batch(
 
     # ---------- 灰区待确认清单（人脸层）
     if class_id:
-        face_assign = ostore.face_map(batch=batch)
+        face_assign = ostore.face_map()
         decisions = cdb.decisions(batch=batch)
         faces = {(r["photo_hash"], r["face_idx"]): r for r in cdb.faces()}
         photo_name = {ph["hash"]: ph for ph in photos}
@@ -316,7 +318,9 @@ def compute_batch(
         "n_unknown_faces": len(view.unknown_faces),
         "n_review": len(view.review_items),
         "n_pairs_present": view.n_present_pairs,
-        "n_manual": len(manual),
+        "n_manual": sum(
+            1 for (h, pid) in manual if h in batch_hashes and pid in per_person
+        ),
         "n_absent": len(view.absent_persons),
         "avg_faces_per_photo": round(n_faces / n_photos, 2) if n_photos else 0.0,
         "fail_ratio": round(fail_ratio, 3),
