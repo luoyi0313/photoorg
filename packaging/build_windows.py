@@ -58,6 +58,17 @@ roster\\    底库参考照片（可选）
 """
 
 
+def _force_utf8_stdio() -> None:
+    """Windows 的 stdout 被重定向到管道时默认不是 UTF-8，中文 print 会直接崩。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+
+
 def _say(msg: str = "") -> None:
     print(msg, flush=True)
 
@@ -144,6 +155,7 @@ def _sha256(path: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_stdio()
     parser = argparse.ArgumentParser(description="打 Windows 绿色版（含模型）")
     parser.add_argument("--skip-model", action="store_true", help="不复制模型（首次运行联网下载）")
     parser.add_argument("--model-dir", help="已下载的 buffalo_l 目录（内含两个 onnx 文件）")

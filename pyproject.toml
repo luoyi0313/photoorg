@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "photoorg"
-version = "2.1.0"
+version = "2.1.1"
 description = "班级照片归档与出勤统计工具（本地人脸注册 + 匹配，人工修正为一等能力）"
 readme = "README.md"
 requires-python = ">=3.10"
