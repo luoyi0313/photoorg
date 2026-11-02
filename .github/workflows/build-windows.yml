@@ -47,6 +47,9 @@ jobs:
           set -o pipefail
           python -u packaging/build_windows.py 2>&1 | tee build.log
 
+      - name: Normalize release asset names
+        run: python packaging/normalize_release_assets.py
+
       - name: Upload build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -60,8 +63,8 @@ jobs:
         with:
           name: photoorg-windows-x64
           path: |
-            dist/*.zip
-            dist/*.sha256.txt
+            dist/photoorg-Windows-x64.zip
+            dist/photoorg-Windows-x64.sha256.txt
           if-no-files-found: error
 
       - name: Attach to release
@@ -69,5 +72,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.zip
-            dist/*.sha256.txt
+            dist/photoorg-Windows-x64.zip
+            dist/photoorg-Windows-x64.sha256.txt

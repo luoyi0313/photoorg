@@ -51,7 +51,8 @@ Windows 上**不需要安装 Python、数据库或任何服务**。推荐使用�
 
 ### 方式 A：直接下载（有发布包时）
 
-从项目的 GitHub Releases 下载 `照片归档工具-Windows-x64.zip`，解压即用。
+从项目的 GitHub Releases 下载 `photoorg-Windows-x64.zip`，解压即用。
+（GitHub 资产使用 ASCII 文件名；本地自己打包时仍生成中文文件名。）
 
 ### 方式 B：自己打一个（推荐，项目已带离线包）
 

@@ -9,7 +9,7 @@
 
 目标电脑**不需要 Python**。完整说明：[Windows使用说明.md](Windows使用说明.md)。
 
-- **拿现成包**：下载 `照片归档工具-Windows-x64.zip`，解压后双击 `照片归档工具.exe`。数据和模型都在文件夹里，首次使用也不用联网。
+- **拿现成包**：从 GitHub Releases 下载 `photoorg-Windows-x64.zip`，解压后双击 `照片归档工具.exe`。数据和模型都在文件夹里，首次使用也不用联网。
 - **自己打包**：项目已带 `windows-offline/`（Python 3.11.9 官方安装包 + 检测/识别模型，约 200 MB，不进入 git，需整体复制）。在 Windows 上双击 [安装Python-Windows.bat](安装Python-Windows.bat)，再双击 [打包Windows版.bat](打包Windows版.bat)，生成 `dist\照片归档工具-Windows-x64.zip`。模型不联网；只有首次 pip 安装 PyInstaller 等依赖需要联网。
 - **整包拷贝**：本地可保留一个 `photoorg-windows-build.zip`（源码 + 离线模型 + Python 安装包 + bat，约 193 MB，不进入 git），直接拷到 Windows 解压使用。
 - **更新后重新生成传输包**：Mac 双击 [制作传输包.command](制作传输包.command)，Windows 双击 [制作传输包.bat](制作传输包.bat)，或运行 `python packaging/make_transfer_zip.py`。会生成 zip 和 `.sha256.txt`，不会打包 `data/`、`photos/`、`.venv/`。
