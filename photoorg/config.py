@@ -49,7 +49,7 @@ DEFAULT_BATCH_GATE: dict[str, float] = {
 
 DEFAULT_ENROLL: dict[str, float] = {
     "max_templates": 20,
-    "dedup_sim": 0.90,
+    "dedup_sim": 0.95,
 }
 
 DEFAULT_ENGINE: dict[str, object] = {

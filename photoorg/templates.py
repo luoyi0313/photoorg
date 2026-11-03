@@ -68,8 +68,13 @@ def add_template_from_face(
     source: str = "refill",
     settings: Settings | None = None,
     force: bool = False,
+    force_dedup: bool = False,
 ) -> dict:
-    """把某张照片里的某张脸变成该人的模板（含去重、质量门控、裁剪存盘）。"""
+    """把某张照片里的某张脸变成该人的模板（含去重、质量门控、裁剪存盘）。
+
+    force_dedup 只跳过「与已有模板太像」这一条，质量门控仍然生效——用于同一个人
+    的相似照片确实需要补一张模板的情况。
+    """
     settings = settings or load_settings(app, class_name)
     store = PersonStore(app.persons_db)
     cp = app.class_paths(class_name)
@@ -105,8 +110,8 @@ def add_template_from_face(
         np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in existing])
         if existing else np.zeros((0, emb.size), dtype=np.float32)
     )
-    dup, sim = dedup_against(emb, tpl_mat, float(settings.enroll.get("dedup_sim", 0.9)))
-    if dup and not force:
+    dup, sim = dedup_against(emb, tpl_mat, float(settings.enroll.get("dedup_sim", 0.95)))
+    if dup and not force and not force_dedup:
         return {"added": False, "reason": f"与已有模板相似度 {sim:.2f}，跳过", "sim": sim}
 
     img = imread(Path(ph["abs"]))
@@ -176,7 +181,7 @@ def enroll_files(
             np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in existing])
             if existing else np.zeros((0, main.embedding.size), dtype=np.float32)
         )
-        dup, sim = dedup_against(main.embedding, tpl_mat, float(settings.enroll.get("dedup_sim", 0.9)))
+        dup, sim = dedup_against(main.embedding, tpl_mat, float(settings.enroll.get("dedup_sim", 0.95)))
         if dup:
             rejected.append(f"{Path(f).name}: 与已有模板太像（{sim:.2f}），跳过")
             continue

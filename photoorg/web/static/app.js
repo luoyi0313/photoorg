@@ -168,13 +168,7 @@
     const d = S.photoFaces?.[hash];
     const batch = (d && d.batch) || S.batch;
     if (!pid) { openFaceDecision(hash, idx); return; }  // 没判定归属时先选人
-    try {
-      const r = await post('/api/gallery/add', { batch, photo_hash: hash, face_idx: idx, person_id: pid });
-      const res = r.result || {};
-      if (res.added) toast('已加入底库', 'ok');
-      else toast('没有加入底库：' + (res.reason || '质量不达标或与已有模板太像'), 'bad');
-      await refresh();
-    } catch (e) { toast(e.message, 'bad'); }
+    await addTemplateFlow(hash, idx, pid, batch);
   }
   async function removePresent(hash, pid, batch) {
     const d = S.photoFaces?.[hash];
@@ -219,16 +213,27 @@
     }catch(e){toast(e.message,'bad');}
   }
   async function openFaceDecision(hash,idx) { const d=S.photoFaces?.[hash] || await api('/api/photo/'+hash+'?'+clsQ()); const f=d.faces.find(x=>x.face_idx===idx); const roster=S.data.persons.map(p=>`<option value="${p.person_id}" ${p.person_id===f.person_id?'selected':''}>${esc(p.name)}</option>`).join(''); modal(`<div class="head"><h2>改判这张脸</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="row"><img style="width:160px;height:160px;object-fit:cover;border-radius:10px" src="/api/crop/${hash}/${idx}?size=300"><div><p>自动候选：<b>${esc(f.person_name||'未知')}</b> · ${f.score.toFixed(2)}</p><select id="facePerson">${roster}</select><div class="row" style="margin-top:12px"><button class="btn primary" onclick="window.PO.setFace('${hash}',${idx})">确认/改判</button><button class="btn" onclick="window.PO.setFaceUnknown('${hash}',${idx})">不认识</button>${f.person_id?`<button class="btn danger" onclick="window.PO.setPair('${hash}',${f.person_id},'absent')">移出 ${esc(f.person_name)}</button>`:''}</div><div class="row" style="margin-top:8px"><button class="btn sm" onclick="window.PO.addTemplate('${hash}',${idx})">加为模板</button><span class="muted small">把这张脸加入所选人员的底库（会过质量门控与去重，不合格会说明原因）</span></div></div></div>`); }
-  async function addTemplate(hash, idx) {
-    const pid = Number($('#facePerson')?.value);
-    if (!pid) { toast('请先选择人员', 'bad'); return; }
+  async function addTemplateFlow(hash, idx, pid, batch) {
     try {
-      const r = await post('/api/gallery/add', { batch: S.batch, photo_hash: hash, face_idx: idx, person_id: pid });
-      const res = r.result || {};
+      const body = { batch: batch || S.batch, photo_hash: hash, face_idx: idx, person_id: pid };
+      let r = await post('/api/gallery/add', body);
+      let res = r.result || {};
+      // 只是「和已有模板太像」时允许人工确认后强制加入；质量不合格仍然拒绝
+      if (!res.added && /相似度/.test(res.reason || '')) {
+        if (confirm(`${res.reason}\n\n这张照片确实需要补一张模板吗？（质量检查仍然有效）`)) {
+          r = await post('/api/gallery/add', Object.assign({ force_dedup: true }, body));
+          res = r.result || {};
+        }
+      }
       if (res.added) toast('已加入底库', 'ok');
       else toast('没有加入底库：' + (res.reason || '质量不达标或与已有模板太像'), 'bad');
       await refresh();
     } catch (e) { toast(e.message, 'bad'); }
+  }
+  async function addTemplate(hash, idx) {
+    const pid = Number($('#facePerson')?.value);
+    if (!pid) { toast('请先选择人员', 'bad'); return; }
+    await addTemplateFlow(hash, idx, pid, S.batch);
   }
   async function setFace(hash,idx) { await decideModalFace(hash,idx,'present',Number($('#facePerson').value)); }
   async function setFaceUnknown(hash,idx) { await decideModalFace(hash,idx,'unknown'); }

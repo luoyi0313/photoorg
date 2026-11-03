@@ -86,6 +86,7 @@ class GalleryAddReq(BaseModel):
     face_idx: int
     person_id: int
     force: bool = False
+    force_dedup: bool = False
 
 
 class ConfirmReq(BaseModel):
@@ -926,7 +927,8 @@ def create_app(root: Path | str = ".", default_class: str | None = None) -> Fast
         c = _class_for_batch(app_paths, req.batch) or _class(None)
         try:
             r = add_template_from_face(app_paths, c, req.person_id, req.photo_hash,
-                                       req.face_idx, source="manual", force=req.force)
+                                       req.face_idx, source="manual", force=req.force,
+                                       force_dedup=req.force_dedup)
         except UserError as e:
             raise HTTPException(400, str(e))
         return {"result": r}
