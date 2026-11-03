@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 1, 3, 0),
-    prodvers=(2, 1, 3, 0),
+    filevers=(2, 1, 4, 0),
+    prodvers=(2, 1, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'photoorg'),
           StringStruct('FileDescription', '班级照片归档与出勤统计（本机运行）'),
-          StringStruct('FileVersion', '2.1.3'),
+          StringStruct('FileVersion', '2.1.4'),
           StringStruct('InternalName', 'photoorg'),
           StringStruct('LegalCopyright', '本地工具；人脸模型许可请另行确认'),
           StringStruct('OriginalFilename', '照片归档工具.exe'),
           StringStruct('ProductName', '班级照片归档与出勤统计'),
-          StringStruct('ProductVersion', '2.1.3')
+          StringStruct('ProductVersion', '2.1.4')
         ]
       )
     ]),
