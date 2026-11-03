@@ -1409,6 +1409,7 @@ def _summary(app: AppPaths, cls: str, batch: str) -> dict:
         "review": len(view.review_items),
         "absent": len(view.absent_persons),
         "manual": view.stats.get("n_manual", 0),
+        "no_face": view.stats.get("n_no_face", 0),
         "can_publish": view.can_publish,
         "state": view.state,
         "draft_banner": view.draft_banner,

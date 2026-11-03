@@ -315,6 +315,10 @@ def compute_batch(
         "n_error": n_error,
         "n_faces": n_faces,
         "n_usable_faces": n_usable,
+        # 完全没检出人脸的照片：会保留，但不可能产生任何出勤结论
+        "n_no_face": sum(
+            1 for ph in photos if ph["status"] == "ok" and int(ph["n_faces"] or 0) == 0
+        ),
         "n_unknown_faces": len(view.unknown_faces),
         "n_review": len(view.review_items),
         "n_pairs_present": view.n_present_pairs,

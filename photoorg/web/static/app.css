@@ -625,3 +625,6 @@ pre.tree {
   transition: background .15s, border-color .15s;
 }
 .site-footer button.wechat:hover { background: #e1ebff; border-color: #c6d8ff; }
+
+/* 未检出人脸的缩略图标签 */
+.thumb .tag.warn { background: linear-gradient(180deg, transparent, rgba(168, 98, 0, .92) 40%); }
