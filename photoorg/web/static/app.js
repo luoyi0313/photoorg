@@ -148,7 +148,55 @@
 
   async function settings() { $('#main').innerHTML=`<section class="card"><div class="row"><div><h2>班级管理</h2><span class="muted small">新建班级，或删除不再需要的班级。</span></div></div><div class="row" style="margin-top:10px"><input id="newClassName" type="text" placeholder="新班级名，例如 三年二班" style="width:240px"><button class="btn primary" onclick="window.PO.createClass()">新建班级</button></div><table class="tbl" style="margin-top:12px"><thead><tr><th>班级</th><th class="num">名单</th><th class="num">模板</th><th style="text-align:right">操作</th></tr></thead><tbody>${(S.boot.classes||[]).map(x=>`<tr><td><b>${esc(x.name)}</b>${x.name===S.cls?' <span class="pill reviewed" style="height:20px;font-size:11px">当前</span>':''}</td><td class="num">${x.n_persons}</td><td class="num">${x.n_templates}</td><td style="text-align:right;white-space:nowrap"><button class="btn sm danger" onclick="window.PO.confirmDeleteClass(this.dataset.cls)" data-cls="${esc(x.name)}">删除</button></td></tr>`).join('')}</tbody></table><p class="muted small" style="margin-top:8px">删除班级会移除名单关系、底库模板、识别数据与 out/ 归档；删除活动请到「活动照片」页。</p></section><section class="card"><h2>设置与审计：日常通常不需要操作</h2><p class="muted">这里放的是“纠错、追溯和重建”工具。正常流程只需上传底库、上传活动照片、复核后发布；只有出现下面的特殊情况时才需要来这里。</p><div class="grid c3"><div class="hint"><b>① 我手动改了归档文件夹</b><br>例如在资源管理器里把一张照片拖给了另一个人：点“吸收手动拖动”，把变化写回系统，避免下次重建丢失。</div><div class="hint"><b>② 想恢复整理后的归档</b><br>如果 out/ 文件夹被误删或混乱，点顶部“重建归档”。原始活动照片和识别结论不会丢。</div><div class="hint"><b>③ 想追查谁改过结果</b><br>在下面的审计日志查看人工确认、改判、移出和发布等操作；也可导出 CSV 留档。</div></div></section><div class="split" style="margin-top:14px"><section class="card"><h2>识别阈值校准（高级）</h2><p class="muted">当你已经人工复核过许多灰区，才建议生成阈值建议。它不会自动改动；采纳后会影响历史批次重新匹配的判断。</p><button class="btn" onclick="window.PO.calibrate()">生成校准建议</button><div id="calResult" style="margin-top:12px"></div></section><section class="card"><h2>手动文件调整</h2><p class="muted">通常直接在网页“结果审查”里改判更安全。只有你确实在 Finder / 资源管理器中手动移动 out/ 下的归档照片时，才使用此功能。</p><button class="btn" onclick="window.PO.adopt()">吸收手动拖动</button> <a class="btn" href="/api/export/overrides.csv?${batchQ()}">导出人工修正 CSV</a><p class="muted small">人工修正会保留完整时间和原因记录，方便撤销和追溯。</p></section></div><section class="card" style="margin-top:14px"><div class="row"><div><h2>最近审计日志</h2><span class="muted small">记录所有人工确认、改判、移出、吸收和发布操作。</span></div><button class="btn sm right" onclick="window.PO.showAudit()">刷新日志</button></div><div id="auditLog" class="muted">正在读取…</div></section>`; showAudit(); }
 
-  async function openPhoto(hash) { try { const d=await api('/api/photo/'+hash+'?'+clsQ()); S.photoFaces=S.photoFaces||{}; S.photoFaces[hash]=d; const faces=d.faces; const labels=faces.map(f=>`<div class="facechip"><img src="/api/crop/${hash}/${f.face_idx}?size=100"><span><b>${esc(f.person_name||'未知')}</b><br><small>${esc(f.status)} · ${f.score.toFixed(2)} ${f.manual?'· 人工':''}</small></span><button class="btn sm" onclick="window.PO.openFaceDecision('${hash}',${f.face_idx})">改判</button></div>`).join(''); modal(`<div class="head"><h2>${esc(d.name||hash.slice(0,8))}</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div><div class="photo-stage"><img id="photoStageImg" src="/api/image/${hash}?max=1500" onload="window.PO.drawFaces(this,'${hash}')"><div id="faceBoxes"></div></div><h3 style="margin-top:12px">照片内人脸</h3><div>${labels||'未检出脸'}</div><div class="hint">“移出此人”要在对应人员缩略图中操作；“改判”会同时更新脸层和照片×人层结论。</div>${manualAssignSection(d)}`); } catch(e){toast(e.message,'bad');} }
+  async function openPhoto(hash) { try {
+    const d=await api('/api/photo/'+hash+'?'+clsQ());
+    S.photoFaces=S.photoFaces||{}; S.photoFaces[hash]=d;
+    const faces=d.faces;
+    const labels=faces.map(f=>`<div class="facechip"><img src="/api/crop/${hash}/${f.face_idx}?size=100"><span><b>${esc(f.person_name||'未知')}</b><br><small>${esc(f.status)} · ${f.score.toFixed(2)} ${f.manual?'· 人工':''}</small></span><div style="display:flex;flex-direction:column;gap:4px"><button class="btn sm" onclick="window.PO.openFaceDecision('${hash}',${f.face_idx})">改判</button><button class="btn sm" title="把这张脸加入所选人员的底库" onclick="window.PO.quickTemplate('${hash}',${f.face_idx},${f.person_id||0})">加为模板</button></div></div>`).join('');
+    const present=(d.present||[]).map(x=>`<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line)"><b>${esc(x.name)}</b><span class="right"><button class="btn sm danger" onclick="window.PO.removePresent('${hash}',${x.person_id},'${esc(d.batch||S.batch)}')">移出</button></span></div>`).join('');
+    const batch=esc(d.batch||S.batch);
+    modal(`<div class="head"><h2>${esc(d.name||hash.slice(0,8))}</h2><span class="right"><button class="btn sm" onclick="window.PO.closeModal()">关闭</button></span></div>
+      <div class="photo-stage"><img id="photoStageImg" src="/api/image/${hash}?max=1500" onload="window.PO.drawFaces(this,'${hash}')"><div id="faceBoxes"></div></div>
+      <h3 style="margin-top:12px">照片内人脸</h3><div>${labels||'未检出脸'}</div>
+      <div class="hint">每张脸都可以「改判」或直接「加为模板」；人工标记的照片同样适用。</div>
+      <h3 style="margin-top:14px">这张照片上的出现记录</h3>
+      <div>${present||'<span class="muted small">还没有记为任何人出现。</span>'}</div>
+      ${manualAssignSection(d)}
+      <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn sm danger" onclick="window.PO.deletePhotoFromModal('${hash}','${batch}')">从活动里删除这张照片</button></div>`);
+  } catch(e){toast(e.message,'bad');} }
+  async function quickTemplate(hash, idx, pid) {
+    const d = S.photoFaces?.[hash];
+    const batch = (d && d.batch) || S.batch;
+    if (!pid) { openFaceDecision(hash, idx); return; }  // 没判定归属时先选人
+    try {
+      const r = await post('/api/gallery/add', { batch, photo_hash: hash, face_idx: idx, person_id: pid });
+      const res = r.result || {};
+      if (res.added) toast('已加入底库', 'ok');
+      else toast('没有加入底库：' + (res.reason || '质量不达标或与已有模板太像'), 'bad');
+      await refresh();
+    } catch (e) { toast(e.message, 'bad'); }
+  }
+  async function removePresent(hash, pid, batch) {
+    const d = S.photoFaces?.[hash];
+    const name = (d?.present || []).find(x => x.person_id === pid)?.name || '这个人';
+    if (!confirm(`取消「${name}」在这张照片里的出现记录？`)) return;
+    try {
+      await post('/api/pair', { batch: batch || S.batch, photo_hash: hash, person_id: pid, action: 'absent', operator: operator(), reason: '修正：取消这张照片的人工标记' });
+      toast(`已把「${name}」从这张照片移出`, 'ok');
+      await refresh();
+      openPhoto(hash);
+    } catch (e) { toast(e.message, 'bad'); }
+  }
+  async function deletePhotoFromModal(hash, batch) {
+    if (!confirm('从活动里删除这张照片？原文件和它的识别结果都会删除，不可撤销。')) return;
+    try {
+      await post('/api/photo/delete', { batch: batch || S.batch, photo_hash: hash });
+      closeModal();
+      toast('照片已删除', 'ok');
+      await refresh();
+      if (S.page === 'photos') activityPhotos();
+    } catch (e) { toast(e.message, 'bad'); }
+  }
   // 人工标记优先：不要求系统检出或认出这张脸，用户选谁就记谁。
   function manualAssignSection(d) {
     const present=new Set((d.present||[]).map(x=>x.person_id));
@@ -551,6 +599,6 @@
     } catch(e){ toast(e.message,'bad'); }
   }
 
-  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,manualAssign,closeModal,openActivityUpload,copyWechat,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,renderTreeLevels,updateTreeInfo,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,confirmDeletePerson,doDeletePerson,removeTemplate,createClass,openCreateClass,createClassFromModal,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
+  window.PO={go,decide:(i,pid)=>decide('present',pid),decideUnknown:()=>decide('unknown'),newPerson,nextReview,boxReview,openPhoto,openFaceDecision,setFace,setFaceUnknown,setPair,manualAssign,closeModal,openActivityUpload,copyWechat,quickTemplate,removePresent,deletePhotoFromModal,openGalleryUpload,openGalleryTreeUpload,submitGalleryTree,showTreeResult,renderTreeLevels,updateTreeInfo,addTemplate,confirmAbsent,openPersonUpload,submitPersonUpload,renamePerson,confirmDeletePerson,doDeletePerson,removeTemplate,createClass,openCreateClass,createClassFromModal,unpublish,publish,openPerson,applyRange,clearRange,openBatchAdd,submitBatchAdd,deletePhoto,confirmDeleteBatch,doDeleteBatch,confirmDeleteClass,doDeleteClass,rebuild,adopt,calibrate,applyCal,showAudit,showDiff,openGallery,runClusters,acceptCluster,drawFaces};
   refresh().catch(e=>{$('#main').innerHTML=empty('⚠️','无法读取本地服务',e.message);});
 })();
